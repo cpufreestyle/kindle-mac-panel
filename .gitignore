@@ -1,0 +1,15 @@
+# 运行时数据（本地生成，不进仓库）
+history.json
+__pycache__/
+*.pyc
+kindle-panel.log
+
+# 私有配置（模板文件 city.txt / bark-url.txt 入库，真实值忽略）
+bark-url.txt.local
+
+# Mac 系统垃圾
+.DS_Store
+
+# 告警 App 构建产物
+*.app/
+alert-icon.icns

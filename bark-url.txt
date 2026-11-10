@@ -1,0 +1,2 @@
+# 在 iPhone 安装 Bark（App Store 免费下载）→ 打开复制推送 URL → 粘贴到下面替换本行
+# 格式：https://api.day.app/你的Key

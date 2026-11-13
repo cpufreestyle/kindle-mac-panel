@@ -6,9 +6,10 @@ import time
 HOST = ('192.168.15.244', 23)
 
 FETCHLOOP_PERSIST = r'''#!/bin/sh
-# fetchloop v7（持久版+多 IP fallback）：USB IP 优先（Mac 侧持久化），Wi-Fi IP 兜底
+# fetchloop v9（持久版+多 IP fallback+周期全刷）：USB IP 优先（Mac 侧持久化），Wi-Fi IP 兜底
 D=/var/local/mesquite/com.kindle.macpanel
 P=/mnt/us/usbnet/panel.html
+N=0
 while true; do
   B=$(cat /sys/class/power_supply/bd71827_bat/capacity 2>/dev/null | head -1)
   T=$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -rn | head -1)
@@ -38,6 +39,11 @@ while true; do
     mntroot rw 2>/dev/null
     cp /mnt/us/usbnet/ss.png /usr/share/blanket/screensaver/bg_ss00.png && sync
     mntroot ro 2>/dev/null
+  fi
+  # 周期全刷：清 e-ink 局部刷新累积的残影（每 20 轮 ≈ 60s）
+  N=$((N+1))
+  if [ $((N % 20)) -eq 0 ]; then
+    eips -s w=758,h=1024 -f 2>/dev/null
   fi
   sleep 3
 done

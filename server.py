@@ -534,11 +534,10 @@ def render_panel():
         return (fmt % x) if isinstance(x, (int, float)) else "--"
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        '<meta http-equiv="refresh" content="300">'
         "<title>Mac 面板</title><style>" + PANEL_CSS + "</style></head>"
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'
-        '<span id="ts">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
+        '<span id="ts" data-render-ts="' + str(int(time.time())) + '">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
         # Stats 式分节（全部块级 + 已验证单层 flex 行）
         '<div class="card"><div class="sech">CPU</div>'
         '<div class="row"><div class="label">占用</div>'

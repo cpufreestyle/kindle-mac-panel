@@ -198,30 +198,29 @@ html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; widt
 .card { border:3px solid #000; padding:10px 18px 12px 18px; margin-bottom:10px; }
 .sech { font-size:24px; font-weight:bold; margin-bottom:4px; }
 .dt { font-size:22px; color:#444; margin-top:8px; }
-#cols { display:table; width:100%; margin-top:10px; }
-#colL { display:table-cell; width:57%; vertical-align:top; }
-#colR { display:table-cell; width:43%; padding-left:30px; box-sizing:border-box;
+#cols { display:flex; align-items:flex-start; margin-top:10px; }
+#colL { width:57%; flex:none; }
+#colR { width:43%; padding-left:30px; box-sizing:border-box;
   vertical-align:top; }
-.row { display:table; width:100%; margin-top:10px; }
+.row { display:flex; align-items:center; margin-top:10px; }
 .row:first-child { margin-top:0; }
-.label { display:table-cell; width:82px; font-size:30px; font-weight:bold; }
-.bar { display:table-cell; height:36px; background:#fff; border:3px solid #000; }
+.label { width:82px; font-size:30px; font-weight:bold; flex:none; }
+.bar { flex:1; height:36px; background:#fff; border:3px solid #000;
+  margin:0 12px; box-sizing:border-box; }
 .fill { height:100%; background:#000; }
-.val { display:table-cell; width:130px; text-align:right; font-size:30px;
-  font-weight:bold; }
+.val { width:130px; text-align:right; font-size:30px; font-weight:bold; flex:none; }
 #spark { margin-top:12px; }
-.srow { display:table; width:100%; margin-top:6px; }
-.slabel { display:table-cell; width:74px; font-size:24px; color:#444;
-  vertical-align:bottom; }
-.sbox { display:table-cell; position:relative; height:50px;
-  border-bottom:3px solid #000; vertical-align:bottom; }
+.srow { display:flex; align-items:flex-end; margin-top:6px; }
+.slabel { width:74px; font-size:24px; color:#444; flex:none; }
+.sbox { flex:1; position:relative; height:50px;
+  border-bottom:3px solid #000; }
 #topline { margin-top:10px; font-size:22px; color:#555; }
 #khead2 { font-size:29px; color:#000; letter-spacing:0.12em; font-weight:bold; }
 .kb { margin-top:11px; }
 .kb:first-of-type { margin-top:9px; }
-.kbl { display:table; width:100%; font-size:26px; font-weight:bold; }
-.kbl span { display:table-cell; }
-.kbl span:last-child { text-align:right; }
+.kbl { display:flex; width:100%; font-size:26px; font-weight:bold; }
+.kbl span:first-child { flex:none; }
+.kbl span:last-child { text-align:right; margin-left:auto; }
 .kbt { margin-top:6px; height:28px; border:3px solid #000;
   background:#fff; box-sizing:border-box; overflow:hidden; }
 .kbf { height:100%; background:#000; }

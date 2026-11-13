@@ -190,55 +190,70 @@ def _wx_read():
 PANEL_CSS = """
 html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; width:100%;
   overflow:hidden; font-family:"Microsoft YaHei","Noto Sans CJK",sans-serif; }
-#app { height:100%; box-sizing:border-box; padding:28px 44px 16px 44px;
-  display:flex; flex-direction:column; }
-#head { display:flex; justify-content:space-between; align-items:baseline; }
-#title { font-size:54px; font-weight:bold; letter-spacing:0.14em; }
-#ts { font-size:36px; color:#444; font-weight:bold; }
-.card { border:3px solid #000; padding:10px 18px 12px 18px; margin-bottom:10px; }
-.sech { font-size:24px; font-weight:bold; margin-bottom:4px; }
-.dt { font-size:22px; color:#444; margin-top:8px; }
-#cols { display:flex; align-items:flex-start; margin-top:10px; }
-#colL { width:57%; flex:none; }
-#colR { width:43%; padding-left:30px; box-sizing:border-box;
-  vertical-align:top; }
-.row { display:flex; align-items:center; margin-top:10px; }
-.row:first-child { margin-top:0; }
-.label { width:82px; font-size:30px; font-weight:bold; flex:none; }
-.bar { flex:1; height:36px; background:#fff; border:3px solid #000;
-  margin:0 12px; box-sizing:border-box; }
+#app { min-height:100%; box-sizing:border-box; padding:20px 36px 14px 36px; }
+#head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:8px; }
+#title { float:left; font-size:46px; font-weight:bold; letter-spacing:0.12em; }
+#ts { float:right; font-size:30px; color:#333; font-weight:bold; }
+.card { border:3px solid #000; padding:10px 16px 12px 16px; margin-bottom:12px; }
+.sech { font-size:30px; font-weight:bold; margin-bottom:4px; }
+.row { overflow:hidden; margin-top:8px; }
+.label { float:left; width:110px; font-size:30px; font-weight:bold; }
+.bar { overflow:hidden; height:36px; background:#fff; border:3px solid #000;
+  margin:0 14px; }
 .fill { height:100%; background:#000; }
-.val { width:130px; text-align:right; font-size:30px; font-weight:bold; flex:none; }
-#spark { margin-top:12px; }
-.srow { display:flex; align-items:flex-end; margin-top:6px; }
-.slabel { width:74px; font-size:24px; color:#444; flex:none; }
-.sbox { flex:1; position:relative; height:50px;
-  border-bottom:3px solid #000; }
-#topline { margin-top:10px; font-size:22px; color:#555; }
-#khead2 { font-size:29px; color:#000; letter-spacing:0.12em; font-weight:bold; }
-.kb { margin-top:11px; }
-.kb:first-of-type { margin-top:9px; }
-.kbl { display:flex; width:100%; font-size:26px; font-weight:bold; }
-.kbl span:first-child { flex:none; }
-.kbl span:last-child { text-align:right; margin-left:auto; }
-.kbt { margin-top:6px; height:28px; border:3px solid #000;
-  background:#fff; box-sizing:border-box; overflow:hidden; }
+.val { float:right; width:150px; text-align:right; font-size:30px; font-weight:bold; }
+.dt { font-size:21px; color:#444; margin-top:6px; }
+.kb { margin-top:10px; }
+.kbl { overflow:hidden; width:100%; font-size:30px; font-weight:bold; }
+.kbl span:first-child { float:left; }
+.kbl span:last-child { float:right; }
+.kbt { margin-top:6px; height:36px; border:3px solid #000;
+  background:#fff; overflow:hidden; }
 .kbf { height:100%; background:#000; }
-.kline { margin-top:8px; font-size:20px; color:#555; }
-.dt { font-size:20px; color:#444; margin-top:6px; }
-#advice { margin-top:10px; font-size:26px; font-weight:bold; padding:9px 12px;
-  border:3px solid #000; }
-#grid { display:flex; flex-wrap:wrap; margin-top:14px; }
-.cell { width:18.4%; margin-right:2%; padding:10px 2px 12px 2px; box-sizing:border-box;
-  border:3px solid #000; text-align:center; }
-.cell:last-child { margin-right:0; }
-.cell .k { font-size:24px; color:#444; }
-.cell .v { font-size:36px; font-weight:bold; margin-top:2px; }
-#foot { margin-top:auto; font-size:24px; color:#555; text-align:center; padding:10px 0 0 0; }
+.kline { margin-top:8px; font-size:23px; color:#444; }
+#advice { font-size:23px; color:#444; margin-top:10px; }
 """
 
 
 _COND = {}   # 建议防抖：条件 -> 连续命中次数（fetchloop 15s 一采样，≥3 次≈45s 确认）
+
+LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
+body { margin:0; background:#fff; font-family:sans-serif; }
+.b { border:3px solid #000; margin:10px 20px; padding:6px 16px; }
+h3 { margin:4px 0; font-size:24px; }
+.v1 .bar { display:block; height:28px; border:3px solid #000; margin:4px 0; }
+.v2 .tr { display:table-row; }
+.v2 .c { display:table-cell; font-size:24px; padding:0 8px; }
+.v2 .bar { display:table-cell; height:28px; border:3px solid #000; }
+.v3 .r { display:-webkit-box; -webkit-box-orient:horizontal; }
+.v3 .l { width:110px; font-size:24px; }
+.v3 .bar { -webkit-box-flex:1; height:28px; border:3px solid #000; margin:0 10px; }
+.v3 .v { width:130px; font-size:24px; text-align:right; }
+.v4 .r { display:flex; align-items:center; }
+.v4 .l { width:110px; font-size:24px; }
+.v4 .bar { flex:1; height:28px; border:3px solid #000; margin:0 10px; }
+.v4 .v { width:130px; font-size:24px; text-align:right; }
+.v6 { overflow:hidden; }
+.v6 .l { float:left; width:110px; font-size:24px; }
+.v6 .bar { overflow:hidden; height:28px; border:3px solid #000; margin:0 10px; }
+.v6 .v { float:right; width:130px; font-size:24px; text-align:right; }
+</style></head><body>
+<div class="b v1"><h3>V1 BLOCK</h3>
+<div><div class="l">L1</div><div class="bar" style="width:55%"></div></div>
+<div><div class="l">L2</div><div class="bar" style="width:75%"></div></div></div>
+<div class="b v2"><h3>V2 TABLE</h3>
+<div class="tr"><div class="c">L1</div><div class="bar" style="width:55%"></div><div class="c">V1</div></div>
+<div class="tr"><div class="c">L2</div><div class="bar" style="width:75%"></div><div class="c">V2</div></div></div>
+<div class="b v3"><h3>V3 WEBKITBOX</h3>
+<div class="r"><div class="l">L1</div><div class="bar" style="width:55%"></div><div class="v">V1</div></div>
+<div class="r"><div class="l">L2</div><div class="bar" style="width:75%"></div><div class="v">V2</div></div></div>
+<div class="b v4"><h3>V4 FLEX</h3>
+<div class="r"><div class="l">L1</div><div class="bar" style="width:55%"></div><div class="v">V1</div></div>
+<div class="r"><div class="l">L2</div><div class="bar" style="width:75%"></div><div class="v">V2</div></div></div>
+<div class="b v6"><h3>V6 FLOAT</h3>
+<div class="r"><div class="l">L1</div><div class="bar" style="width:55%"></div><div class="v">V1</div></div>
+<div class="r"><div class="l">L2</div><div class="bar" style="width:75%"></div><div class="v">V2</div></div></div>
+</body></html>"""
 
 
 def _bump(key, hit):
@@ -533,37 +548,33 @@ def render_panel():
         return (fmt % x) if isinstance(x, (int, float)) else "--"
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta http-equiv="refresh" content="300">'
         "<title>Mac 面板</title><style>" + PANEL_CSS + "</style></head>"
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'
-        '<span id="ts" data-render-ts="' + str(int(time.time())) + '">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
+        '<span id="ts">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
         # Stats 式分节（全部块级 + 已验证单层 flex 行）
         '<div class="card"><div class="sech">CPU</div>'
         '<div class="row"><div class="label">占用</div>'
-        '<div class="bar"><div class="fill" style="width:' + str(cpu_show) + '%"></div></div>'
-        '<div class="val">' + cpu_lv + "</div></div>"
+        '<div class="val">' + cpu_lv + '</div>'
+        '<div class="bar"><div class="fill" style="width:' + str(cpu_show) + '%"></div></div></div>'
+        '<div class="row"><div class="label">GPU</div>'
+        '<div class="val">' + gpu_lv + '</div>'
+        '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
         '<div class="dt">15分均 ' + str(avg15) + '% · 最耗 ' + tp_s + '</div></div>'
-        '<div class="card"><div class="sech">GPU</div>'
-        '<div class="row"><div class="label">占用</div>'
-        '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div>'
-        '<div class="val">' + gpu_lv + "</div></div></div>"
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
-        '<div class="bar"><div class="fill" style="width:' + str(mem["usage"]) + '%"></div></div>'
-        '<div class="val">' + str(mem["usage"]) + '%</div></div>'
+        '<div class="val">' + str(mem["usage"]) + '%</div>'
+        '<div class="bar"><div class="fill" style="width:' + str(mem["usage"]) + '%"></div></div></div>'
         '<div class="row"><div class="label">Swap</div>'
+        '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
-        + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div>'
-        '<div class="val">' + swap_s + "</div></div></div>"
+        + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
-        '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div>'
-        '<div class="val">' + str(disk["usage"]) + '%</div></div>'
+        '<div class="val">' + str(disk["usage"]) + '%</div>'
+        '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
         '<div class="dt">已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
-        '<div class="card"><div class="sech">Sensors</div>'
-        '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
-        '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
-        '</div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<div class="kb"><div class="kbl"><span>电池</span><span>' + kb_s + '</span></div>'
         '<div class="kbt"><div class="kbf" style="width:' + (kb or "0") + '%"></div></div></div>'
@@ -571,7 +582,11 @@ def render_panel():
         '<div class="kbt"><div class="kbf" style="width:' + (km or "0") + '%"></div></div></div>'
         '<div class="kb"><div class="kbl"><span>存储</span><span>' + kd_s + '</span></div>'
         '<div class="kbt"><div class="kbf" style="width:' + (kd or "0") + '%"></div></div></div>'
-        '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + "</div>"
+        '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + '</div>'
+        '</div>'
+        '<div class="card"><div class="sech">Sensors</div>'
+        '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
+        '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
         '</div>'
         '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + ' · 点此刷新</div>'
         "</div></body></html>"
@@ -786,6 +801,9 @@ class Handler(BaseHTTPRequestHandler):
             buf = _io.BytesIO()
             render_ring(m.get(nm) or 0).convert("RGB").save(buf, "PNG", optimize=True)
             self._send_bytes(200, buf.getvalue(), "image/png")
+            return
+        if p.startswith("/laytest"):
+            self._send(200, LAYTEST_HTML, "text/html; charset=utf-8")
             return
         if p.startswith("/history"):
             html = render_history()

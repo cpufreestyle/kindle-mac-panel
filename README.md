@@ -85,19 +85,30 @@ python3 deploy-cleanup.py       # 清理探测 / --apply 执行
 mntroot rw && cp /mnt/us/usbnet/ss00.orig.bak /usr/share/blanket/screensaver/bg_ss00.png && mntroot ro
 ```
 
-## 遥测禁用（根治 "Collecting debug info" 弹窗）
+## 遥测弹窗治理（⚠️ 2026-11-14 修正）
 
-已禁用并可逆（conf 均改名 `.disabled` 备份于 /etc/upstart/）：
-- `clickstream_logging`（record_device_metric.sh — 弹窗真源）
-- `fastmetrics`、`last_debug_info`
-- crontab 中 7 行 `loginfo`/`tinyrot`
+**⛔️ 禁止把 /etc/upstart/*.conf 改名 .disabled 来禁服务**——框架启动链依赖这些
+job（`start on started demd` 等事件），改名后设备卡开机转圈，powerd/appmgrd 全
+不启动，只能恢复文件+重启救回（2026-11-14 实测，重启 5 次才恢复）。
+`disable-logcol.py` 已改成墓碑文件防止误运行。
 
-恢复：`mntroot rw; mv /etc/upstart/<名>.conf.disabled /etc/upstart/<名>.conf; mntroot ro`
+弹窗的正确治理（均已落地）：
+1. core_pattern 改为有效管道丢弃（watchdog v3.2）
+2. 面板 HTML 不含 JS（时钟 JS 已回退）
+3. float 布局稳定后 mesquite 不崩溃，无崩溃即无弹窗
+4. 仅 `last_debug_info.conf.disabled` 保留禁用（实测不挡启动）
 
 ## 关键坑位（详见记忆 kindle-pw4-usbnet-install-state）
 
+- **mesquite 只可靠支持 float 布局**：flex/`-webkit-box`/table 全部会塌缩或竖排
+  （2026-11-14 设备实测五种布局对比），面板 CSS 全部用 float+overflow:hidden
+- mesquite 布局绘制状态坏了（卡片塌缩但值位置正确）→ **重启设备即愈**，
+  eips -c 清屏重绘无效
+- USB 重枚举（重启/重插）后 Mac 侧 IP 由 RNDIS/Ethernet Gadget 服务自动恢复，
+  接口名会变（en5→en10），排查先看 `arp -a`
 - mesquite 对内联 onclick 不可靠 → 刷新靠 meta refresh 300 兜底 + 退出重进
 - /etc 只读，改 crontab 必须 mntroot rw
 - U 盘模式下设备访问不到 /mnt/us → watchdog 空转，必须 diskutil eject
 - mesquite 崩溃吐 core → watchdog 每分钟自动清
 - telnet pty 行长 ~200 字符 → 长命令 base64 分块推送
+- fetchloop 拉取覆盖 app 目录 HTML，做设备端测试前先 `pkill -f fetchloop`

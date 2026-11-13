@@ -1,51 +1,22 @@
 #!/usr/bin/env python3
-# 终极：禁用 demd（诊断事件管理 — 崩溃收集+弹窗真源）+ 清空全部 .sdr 归档
-import socket
-import time
-
-HOST = ('192.168.15.244', 23)
-
-
-def rq(s):
-    d = b''
-    s.settimeout(3)
-    while True:
-        try:
-            c = s.recv(65536)
-            if not c:
-                break
-            d += c
-        except socket.timeout:
-            break
-    return d
-
-
-def cmd(s, c, wait=3.0):
-    s.sendall((c + '\n').encode())
-    time.sleep(wait)
-    return rq(s).decode('utf-8', 'replace')
-
-
-def main():
-    s = socket.create_connection(HOST, timeout=8)
-    rq(s)
-    cmd(s, '', 0.3)
-
-    print('--- 确认 demd ---')
-    print(cmd(s, 'head -6 /etc/upstart/demd.conf; echo D_END', 2.5).strip().splitlines()[1:])
-    print('--- 停服务 + 禁自启 ---')
-    print(cmd(s, 'initctl stop demd 2>/dev/null; echo S=$?', 3).strip().splitlines()[1:])
-    print(cmd(s, 'mntroot rw; '
-          'if [ -f /etc/upstart/demd.conf ] && [ ! -f /etc/upstart/demd.conf.disabled ]; then '
-          'mv /etc/upstart/demd.conf /etc/upstart/demd.conf.disabled; echo MOVED; fi; '
-          'mntroot ro; echo D1_END', 4).strip().splitlines()[1:])
-    print('--- 清空全部 .sdr 崩溃归档 ---')
-    print(cmd(s, 'rm -rf /mnt/us/documents/mesquite_*_crash_*; '
-          'echo CLEANED; ls /mnt/us/documents/ | grep -c crash; echo D2_END', 6).strip().splitlines()[1:])
-    print('--- 验证 ---')
-    print(cmd(s, 'ls /etc/upstart/ | grep -iE "demd|last_debug"; echo V_END', 2).strip().splitlines()[1:])
-    s.close()
-
-
-if __name__ == '__main__':
-    main()
+# ⛔️ 此脚本已废弃，禁止运行！
+#
+# 2026-11-14 实测事故：本脚本把 /etc/upstart/ 下的 demd.conf、clickstream_logging.conf、
+# fastmetrics.conf 改名为 .disabled，导致 Kindle 框架启动链（upstart 依赖
+# `start on started demd` 等事件）永远等不到事件，设备卡在开机转圈（powerd/appmgrd
+# 全部不启动），被迫恢复文件 + 重启 4 次 + 用户强制重启 1 次才救回。
+#
+# 弹窗的正确治理方式（均已落地，不需要禁用这些服务）：
+#   1. core_pattern 改为有效管道丢弃（watchdog v3.2）；
+#   2. 面板 HTML 不含 JS（时钟 JS 已回退）；
+#   3. float 布局稳定后 mesquite 不再崩溃，无崩溃即无弹窗。
+#
+# 如历史遗留 .disabled 文件需要恢复：
+#   ssh/telnet 到设备后执行：
+#     mount -o remount,rw /
+#     mv /etc/upstart/demd.conf.disabled /etc/upstart/demd.conf
+#     mv /etc/upstart/clickstream_logging.conf.disabled /etc/upstart/clickstream_logging.conf
+#     mv /etc/upstart/fastmetrics.conf.disabled /etc/upstart/fastmetrics.conf
+#     mount -o remount,ro / ; sync ; reboot
+#   （last_debug_info.conf.disabled 可以留着，实测不挡启动）
+raise SystemExit('⛔️ 禁止运行：此脚本会导致 Kindle 无法开机（见文件头注释）。如需恢复 .disabled 文件请看注释。')

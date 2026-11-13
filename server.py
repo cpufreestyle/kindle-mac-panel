@@ -588,7 +588,7 @@ def render_panel():
         '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
         '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
         '</div>'
-        '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + ' · 点此刷新</div>'
+        '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + '</div>'
         "</div></body></html>"
     )
 

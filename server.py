@@ -548,7 +548,7 @@ def render_panel():
         return (fmt % x) if isinstance(x, (int, float)) else "--"
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        '<meta http-equiv="refresh" content="300">'
+        # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
         "<title>Mac 面板</title><style>" + PANEL_CSS + "</style></head>"
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'

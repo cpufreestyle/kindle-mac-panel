@@ -24,7 +24,7 @@ HIST_DISK = []     # 数据卷占用历史（percent）
 _BARS = "▁▂▃▄▅▆▇█"
 
 
-def _spark(vals, vmax, width=30):
+def _spark(vals, vmax, width=26):
     vs = [v for v in vals if v is not None][-width:]
     if len(vs) < 2:
         return ""
@@ -33,13 +33,9 @@ def _spark(vals, vmax, width=30):
 
 
 def spark_payload():
-    """四条趋势 span 的最新文本（供 /spark.json 与面板首渲染共用）"""
-    def _line(vals):
-        filled = [v for v in vals if v is not None]
-        return _spark(vals, 100) + " 峰%d%%" % int(max(filled or [0]))
-
-    return {"spc": _line(HIST_CPU), "spm": _line(HIST_MEM),
-            "sps": _line(HIST_SWAP), "spd": _line(HIST_DISK)}
+    """四条趋势 span 的最新波形（供 /spark.json 与面板首渲染共用；峰值在 .dt 静态行）"""
+    return {"spc": _spark(HIST_CPU, 100), "spm": _spark(HIST_MEM, 100),
+            "sps": _spark(HIST_SWAP, 100), "spd": _spark(HIST_DISK, 100)}
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -222,7 +218,7 @@ html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; widt
 #head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:8px; }
 #title { float:left; font-size:46px; font-weight:bold; letter-spacing:0.12em; }
 #ts { float:right; font-size:30px; color:#333; font-weight:bold; }
-.card { border:3px solid #000; padding:10px 16px 12px 16px; margin-bottom:12px; }
+.card { border:3px solid #000; padding:8px 14px 10px 14px; margin-bottom:8px; }
 .sech { font-size:30px; font-weight:bold; margin-bottom:4px; }
 .row { overflow:hidden; margin-top:8px; }
 .label { float:left; width:110px; font-size:30px; font-weight:bold; }
@@ -231,6 +227,7 @@ html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; widt
 .fill { height:100%; background:#000; }
 .val { float:right; width:150px; text-align:right; font-size:30px; font-weight:bold; }
 .dt { font-size:21px; color:#444; margin-top:6px; }
+.spark { font-size:34px; line-height:1; margin-top:4px; overflow:hidden; white-space:nowrap; }
 .kb { margin-top:10px; }
 .kbl { overflow:hidden; width:100%; font-size:30px; font-weight:bold; }
 .kbl span:first-child { float:left; }
@@ -574,6 +571,9 @@ def render_panel():
     aps_v = d.get("avg_pstr")
     def fnum(x, fmt):
         return (fmt % x) if isinstance(x, (int, float)) else "--"
+
+    def _hmax(vals):
+        return int(max([v for v in vals if v is not None] or [0]))
     sp = spark_payload()
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -598,7 +598,8 @@ def render_panel():
         '<div class="row"><div class="label">GPU</div>'
         '<div class="val">' + gpu_lv + '</div>'
         '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
-        '<div class="dt">趋势 <span id="spc">' + sp["spc"] + '</span> · 15分均 ' + str(avg15) + '%</div></div>'
+        '<div class="spark"><span id="spc">' + sp["spc"] + '</span></div>'
+        '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 15分均 ' + str(avg15) + '%</div></div>'
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
         '<div class="val">' + str(mem["usage"]) + '%</div>'
@@ -607,14 +608,14 @@ def render_panel():
         '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
         + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
-        '<div class="dt">内存趋势 <span id="spm">' + sp["spm"] + '</span></div>'
-        '<div class="dt">Swap趋势 <span id="sps">' + sp["sps"] + '</span></div></div>'
+        '<div class="spark"><span id="spm">' + sp["spm"] + '</span></div>'
+        '<div class="dt">内存峰 ' + str(_hmax(HIST_MEM)) + '% · Swap <span id="sps">' + sp["sps"] + '</span> 峰' + str(_hmax(HIST_SWAP)) + '%</div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
-        '<div class="dt">磁盘趋势 <span id="spd">' + sp["spd"] + '</span></div>'
-        '<div class="dt">已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
+        '<div class="spark"><span id="spd">' + sp["spd"] + '</span></div>'
+        '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<div class="kb"><div class="kbl"><span>电池</span><span>' + kb_s + '</span></div>'
         '<div class="kbt"><div class="kbf" style="width:' + (kb or "0") + '%"></div></div></div>'

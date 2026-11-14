@@ -29,6 +29,11 @@ while true; do
       cp $D/spark$C.png $D/spark${C}_a.png
       cp $D/spark$C.png $D/spark${C}_b.png
     done
+    curl -s --max-time 6 "http://$OK:18866/script.js" -o $D/script.js
+    cp $D/script.js $DOC/script.js 2>/dev/null
+    curl -s --max-time 6 "http://$OK:18866/probe.js" -o $D/probe.js
+    cp $D/probe.js $DOC/probe.js 2>/dev/null
+    touch $D/invalidatedTimeStamp
     curl -s --max-time 10 "http://$OK:18866/screensaver.png" -o /mnt/us/usbnet/ss.png
     for R in cpu gpu ram disk; do
       curl -s --max-time 6 "http://$OK:18866/ring/$R.png" -o $D/ring_$R.png

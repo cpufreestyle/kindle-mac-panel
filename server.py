@@ -25,6 +25,39 @@ HIST_KB = []       # Kindle 电池历史（percent）
 HIST_KM = []       # Kindle 内存历史
 HIST_KD = []       # Kindle 存储历史
 
+# 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
+HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
+
+
+def _hload():
+    """服务器启动时恢复历史（内存态数组重启即丢的根治）"""
+    try:
+        d = json.load(open(HIST_FILE))
+    except Exception:
+        return
+    HIST_CPU[:] = d.get("cpu") or []
+    HIST_MEM[:] = d.get("mem") or []
+    HIST_TEMP[:] = d.get("temp") or []
+    HIST_SWAP[:] = d.get("swap") or []
+    HIST_DISK[:] = d.get("disk") or []
+    HIST_GPU[:] = d.get("gpu") or []
+    HIST_KB[:] = d.get("kb") or []
+    HIST_KM[:] = d.get("km") or []
+    HIST_KD[:] = d.get("kd") or []
+
+
+def _hsave():
+    try:
+        json.dump({"cpu": HIST_CPU, "mem": HIST_MEM, "temp": HIST_TEMP,
+                   "swap": HIST_SWAP, "disk": HIST_DISK, "gpu": HIST_GPU,
+                   "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD},
+                  open(HIST_FILE, "w"))
+    except Exception:
+        pass
+
+
+_hload()
+
 _BARS = "▁▂▃▄▅▆▇█"
 
 
@@ -250,6 +283,7 @@ def collect():
     HIST_TEMP.append(_t if isinstance(_t, (int, float)) else None)
     if len(HIST_TEMP) > 60:
         HIST_TEMP.pop(0)
+    _hsave()
 
     swap_used = sm.used / 1024 ** 3
     avg15 = round(sum(HIST_CPU) / len(HIST_CPU), 1) if len(HIST_CPU) >= 3 else usage
@@ -333,6 +367,27 @@ html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; widt
 
 
 _COND = {}   # 建议防抖：条件 -> 连续命中次数（fetchloop 15s 一采样，≥3 次≈45s 确认）
+
+# 面板页面轮询脚本（外链 script.js）——象棋/番茄钟验证过的加载模式
+SCRIPT_JS = (
+    "var __tg=false;"
+    "var tk0=document.getElementById('tick');"
+    "if(tk0)tk0.textContent='已加载';"          # 探针①：script.js 一执行立即置位
+    "setInterval(function(){"
+    "var tk=document.getElementById('tick');"
+    "if(tk)tk.textContent='JS活';"              # 探针②：定时器在跑
+    "var x=new XMLHttpRequest();"
+    "x.open('GET','spark.json?v='+Date.now(),1);"
+    "x.onreadystatechange=function(){"
+    "if(x.readyState==4&&x.status==200){"
+    "try{var d=JSON.parse(x.responseText);for(var k in d){"
+    "var e=document.getElementById(k);if(e)e.textContent=d[k];}}catch(e){}"
+    "var tg=(__tg=!__tg);"
+    "for(var c in window.__tgnm){var im=document.getElementById(c);"
+    "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
+    "}};x.send()},60000);"
+    "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp'};"
+)
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
 body { margin:0; background:#fff; font-family:sans-serif; }
@@ -671,18 +726,9 @@ def render_panel():
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
         "<title>Mac 面板</title><style>" + PANEL_CSS + "</style>"
-        # 60s 轮询同目录 spark.json 更新波形文本（番茄钟实证分钟级 DOM 更新安全；
-        # 时钟 JS 崩溃实锤是每秒高频 + 大段 innerHTML，此处只改 4 个 span 的 textContent）
-        "<script>setInterval(function(){var x=new XMLHttpRequest();"
-        "x.open('GET','spark.json?v='+Date.now(),1);"
-        "x.onreadystatechange=function(){if(x.readyState==4&&x.status==200){"
-        "try{var d=JSON.parse(x.responseText);for(var k in d){"
-        "var e=document.getElementById(k);if(e)e.textContent=d[k];}}"
-        "catch(e){}var tg=window.__tg=!window.__tg;"
-        "for(var c in window.__tgnm){var im=document.getElementById(c);"
-        "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';};};"
-        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp'};"
-        "x.send()},60000);</script></head>"
+        # 外链 script.js（象棋/番茄钟验证过的加载模式，内联 script 执行不稳定）：
+        # 每 60s 轮询 spark.json 更新文本 + img 双缓冲切换；tick 探针显示 JS 心跳分钟
+        '<script src="probe.js"></script></head>'
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'
         '<span id="ts">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
@@ -719,6 +765,7 @@ def render_panel():
         '</div>'
         '<div class="card"><div class="sech">Sensors</div>'
         '<img id="cv5" src="sparktemp.png" style="width:100%;height:54px;margin-top:3px">'
+        '<div class="dt">JS心跳 <span id="tick">--</span></div>'
         '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
         '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
         '</div>'
@@ -927,6 +974,7 @@ class Handler(BaseHTTPRequestHandler):
                     _arr.append(None)
                 if len(_arr) > 60:
                     _arr.pop(0)
+            _hsave()
             try:  # 设备心跳：fetchloop 每次上报即活着（告警脚本读此文件判断失联）
                 with open("/tmp/kindle-kheartbeat", "w") as f:
                     f.write(str(time.time()))
@@ -974,6 +1022,9 @@ class Handler(BaseHTTPRequestHandler):
                 png = render_curves_png([(HIST_DISK, 0, 3)],
                                         legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3)])
             self._send_bytes(200, png, "image/png")
+            return
+        if p.startswith("/probe.js"):
+            self._send(200, SCRIPT_JS, "application/javascript")
             return
         if p.startswith("/spark.json"):
             self._send(200, json.dumps(spark_payload(), ensure_ascii=False),

@@ -546,6 +546,20 @@ def render_panel():
     aps_v = d.get("avg_pstr")
     def fnum(x, fmt):
         return (fmt % x) if isinstance(x, (int, float)) else "--"
+    # Unicode 方块趋势条：mesquite 纯文本零布局风险（▁▂▃▄▅▆▇█ 八级灰度）
+    _BARS = "▁▂▃▄▅▆▇█"
+
+    def _spark(vals, vmax, width=42):
+        vs = [v for v in vals if v is not None][-width:]
+        if len(vs) < 2:
+            return ""
+        step = (vmax or 1) / 7.0
+        return "".join(_BARS[min(7, int(v / step))] for v in vs)
+
+    cpu_spark = _spark(HIST_CPU, 100)
+    mem_spark = _spark(HIST_MEM, 100)
+    cpu_hmax = max([v for v in HIST_CPU if v is not None] or [0])
+    mem_hmax = max([v for v in HIST_MEM if v is not None] or [0])
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
@@ -561,7 +575,7 @@ def render_panel():
         '<div class="row"><div class="label">GPU</div>'
         '<div class="val">' + gpu_lv + '</div>'
         '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
-        '<div class="dt">15分均 ' + str(avg15) + '% · 最耗 ' + tp_s + '</div></div>'
+        '<div class="dt">趋势 ' + (cpu_spark + ' 峰' + str(int(cpu_hmax)) + '%') + ' · 15分均 ' + str(avg15) + '%</div></div>'
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
         '<div class="val">' + str(mem["usage"]) + '%</div>'
@@ -570,6 +584,7 @@ def render_panel():
         '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
         + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
+        '<div class="dt">内存趋势 ' + (mem_spark + ' 峰' + str(int(mem_hmax)) + '%') + '</div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-# 分块 base64 推送本地 watchdog-v33.sh 到设备 /mnt/us/usbnet/watchdog.sh
+# 分块 base64 推送本地脚本到设备（默认 watchdog，可传参：push-watchdog.py <本地> <远程>）
 import base64
 import socket
+import sys
 import time
 
 HOST = ('192.168.15.244', 23)
-LOCAL = '/Users/a1-6/kindle-panel/watchdog-v33.sh'
-REMOTE = '/mnt/us/usbnet/watchdog.sh'
+LOCAL = sys.argv[1] if len(sys.argv) > 1 else '/Users/a1-6/kindle-panel/watchdog-v33.sh'
+REMOTE = sys.argv[2] if len(sys.argv) > 2 else '/mnt/us/usbnet/watchdog.sh'
 
 
 def telnet(cmds, waits):
@@ -42,7 +43,7 @@ cmds += ["echo '%s' >> /tmp/wd.b64" % c for c in chunks]
 cmds += [
     'base64 -d /tmp/wd.b64 > ' + REMOTE + '.new',
     'wc -c ' + REMOTE + '.new; sh -n ' + REMOTE + '.new && echo DEV_SYNTAX_OK',
-    'mv ' + REMOTE + '.new ' + REMOTE + ' && grep -c fetchloop.sh ' + REMOTE + '; echo PUSHED',
+    'mv ' + REMOTE + '.new ' + REMOTE + ' && wc -c ' + REMOTE + '; echo PUSHED',
 ]
 waits = [1.5] + [1.2] * len(chunks) + [3, 4, 4]
 outs = telnet(cmds, waits)

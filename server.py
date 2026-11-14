@@ -37,6 +37,29 @@ def spark_payload():
     层级：CPU/内存主指标 44px×21 点，磁盘次级 34px×26 点，Swap 行内小字 20 点"""
     return {"spc": _spark(HIST_CPU, 100, 21), "spm": _spark(HIST_MEM, 100, 21),
             "sps": _spark(HIST_SWAP, 100, 20), "spd": _spark(HIST_DISK, 100, 26)}
+
+
+def render_curve_png(vals, w=900, h=110):
+    """60 点历史曲线 PNG（白底黑折线 3px，e-ink 友好）"""
+    import io
+    from PIL import Image, ImageDraw
+    vs = [v for v in vals if v is not None][-60:]
+    img = Image.new("L", (w, h), 255)
+    if len(vs) >= 2:
+        dr = ImageDraw.Draw(img)
+        mx = max(max(vs), 1.0)
+        pts = []
+        n = len(vs)
+        for i, v in enumerate(vs):
+            x = int(i * (w - 10) / (n - 1)) + 5
+            y = h - 8 - int(min(v, mx) / mx * (h - 18))
+            pts.append((x, y))
+        dr.line(pts, fill=0, width=3)
+        lx, ly = pts[-1]
+        dr.ellipse([lx - 5, ly - 5, lx + 5, ly + 5], fill=0)   # 当前值圆点
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -587,7 +610,9 @@ def render_panel():
         "x.open('GET','spark.json?v='+Date.now(),1);"
         "x.onreadystatechange=function(){if(x.readyState==4&&x.status==200){"
         "try{var d=JSON.parse(x.responseText);for(var k in d){"
-        "var e=document.getElementById(k);if(e)e.textContent=d[k];}}catch(e){}}};"
+        "var e=document.getElementById(k);if(e)e.textContent=d[k];}}"
+        "catch(e){}for(var c in {cv:1,cv2:1,cv3:1}){var im=document.getElementById(c);"
+        "if(im)im.src=im.src.split('?')[0]+'?v='+Date.now();};};"
         "x.send()},60000);</script></head>"
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'
@@ -600,7 +625,7 @@ def render_panel():
         '<div class="row"><div class="label">GPU</div>'
         '<div class="val">' + gpu_lv + '</div>'
         '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
-        '<div class="spark"><span id="spc">' + sp["spc"] + '</span></div>'
+        '<img id="cv" src="sparkcpu.png" style="width:100%;height:90px;margin-top:4px">'
         '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 15分均 ' + str(avg15) + '%</div></div>'
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
@@ -610,13 +635,13 @@ def render_panel():
         '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
         + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
-        '<div class="spark"><span id="spm">' + sp["spm"] + '</span></div>'
+        '<img id="cv2" src="sparkmem.png" style="width:100%;height:90px;margin-top:4px">'
         '<div class="dt">内存峰 ' + str(_hmax(HIST_MEM)) + '% · Swap <span id="sps">' + sp["sps"] + '</span> 峰' + str(_hmax(HIST_SWAP)) + '%</div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
-        '<div class="spark s2"><span id="spd">' + sp["spd"] + '</span></div>'
+        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:72px;margin-top:4px">'
         '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<div class="kb"><div class="kbl"><span>电池</span><span>' + kb_s + '</span></div>'
@@ -844,6 +869,12 @@ class Handler(BaseHTTPRequestHandler):
             buf = _io.BytesIO()
             render_ring(m.get(nm) or 0).convert("RGB").save(buf, "PNG", optimize=True)
             self._send_bytes(200, buf.getvalue(), "image/png")
+            return
+        if p.startswith("/sparkpng/"):
+            nm = p.split("/sparkpng/")[1].split(".")[0]
+            src = {"cpu": HIST_CPU, "mem": HIST_MEM,
+                   "swap": HIST_SWAP, "disk": HIST_DISK}.get(nm) or []
+            self._send_bytes(200, render_curve_png(src), "image/png")
             return
         if p.startswith("/spark.json"):
             self._send(200, json.dumps(spark_payload(), ensure_ascii=False),

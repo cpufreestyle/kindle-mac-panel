@@ -23,6 +23,10 @@ while true; do
     cp $P $DOC/index.html 2>/dev/null
     curl -s --max-time 6 "http://$OK:18866/spark.json" -o $D/spark.json
     cp $D/spark.json $DOC/spark.json 2>/dev/null
+    for C in cpu mem disk; do
+      curl -s --max-time 6 "http://$OK:18866/sparkpng/$C.png" -o $D/spark$C.png
+      cp $D/spark$C.png $DOC/spark$C.png 2>/dev/null
+    done
     curl -s --max-time 10 "http://$OK:18866/screensaver.png" -o /mnt/us/usbnet/ss.png
     for R in cpu gpu ram disk; do
       curl -s --max-time 6 "http://$OK:18866/ring/$R.png" -o $D/ring_$R.png

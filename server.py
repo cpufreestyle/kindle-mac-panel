@@ -40,30 +40,51 @@ def spark_payload():
 
 
 def render_curve_png(vals, label="", w=900, h=110):
-    """60 点历史曲线 PNG（白底黑折线 3px；左上角指标名+当前值标注，e-ink 友好）"""
+    """60 点历史平滑曲线 PNG（Catmull-Rom 样条 + 4x 超采样抗锯齿；左上角指标名+当前值）"""
     import io
     from PIL import Image, ImageDraw, ImageFont
     vs = [v for v in vals if v is not None][-60:]
-    img = Image.new("L", (w, h), 255)
+    S = 4                                    # 超采样倍率（抗锯齿）
+    W, H = w * S, h * S
+    img = Image.new("L", (W, H), 255)
     dr = ImageDraw.Draw(img)
     try:
-        fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 34)
+        fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 34 * S)
     except Exception:
         fnt = None
     cur = int(vs[-1]) if vs else 0
     if label:
-        dr.text((8, 4), "%s %d%%" % (label, cur), fill=0, font=fnt)
+        dr.text((8 * S, 2 * S), "%s %d%%" % (label, cur), fill=0, font=fnt)
     if len(vs) >= 2:
         mx = max(max(vs), 1.0)
-        pts = []
         n = len(vs)
+        pts = []
         for i, v in enumerate(vs):
-            x = int(i * (w - 10) / (n - 1)) + 5
-            y = h - 8 - int(min(v, mx) / mx * (h - 52))
+            x = int(i * (W - 40) / (n - 1)) + 20
+            y = H - 8 * S - int(min(v, mx) / mx * (H - 52 * S))
             pts.append((x, y))
-        dr.line(pts, fill=0, width=3)
+        smooth = []
+        for i in range(n - 1):               # Catmull-Rom 样条插值
+            p0 = pts[i - 1] if i > 0 else pts[i]
+            p1, p2 = pts[i], pts[i + 1]
+            p3 = pts[i + 2] if i + 2 < n else p2
+            for t in range(8):
+                t /= 8.0
+                t2 = t * t
+                t3 = t2 * t
+                x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t
+                           + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+                           + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3)
+                y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t
+                           + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+                           + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+                smooth.append((x, y))
+        smooth.append(pts[-1])
+        dr.line(smooth, fill=0, width=3 * S)
         lx, ly = pts[-1]
-        dr.ellipse([lx - 5, ly - 5, lx + 5, ly + 5], fill=0)   # 当前值圆点
+        r = 5 * S
+        dr.ellipse([lx - r, ly - r, lx + r, ly + r], fill=0)   # 当前值圆点
+    img = img.resize((w, h), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     return buf.getvalue()

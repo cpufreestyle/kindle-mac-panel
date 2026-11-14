@@ -386,7 +386,7 @@ SCRIPT_JS = (
     "for(var c in window.__tgnm){var im=document.getElementById(c);"
     "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
     "}};x.send()},60000);"
-    "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp'};"
+        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle'};"
 )
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
@@ -764,7 +764,6 @@ def render_panel():
         '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + '</div>'
         '</div>'
         '<div class="card"><div class="sech">Sensors</div>'
-        '<img id="cv5" src="sparktemp.png" style="width:100%;height:54px;margin-top:3px">'
         '<div class="dt">JS心跳 <span id="tick">--</span></div>'
         '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
         '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
@@ -1001,7 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
                     [(HIST_CPU, 0, 3), (HIST_GPU, 110, 2)],
                     legend_items=[("CPU %d%%" % _hmax2(HIST_CPU), 0, 3),
                                   ("GPU %d%%" % gpu_cur, 110, 2)])
-            elif nm == "mem":     # 内存黑实线 + Swap 灰细线
+            elif nm == "mem":     # 内存黑实线 + Swap 灰细线（同图双线）
                 cur_sw = [v for v in HIST_SWAP if v is not None]
                 sw_cur = int(cur_sw[-1]) if cur_sw else 0
                 png = render_curves_png(

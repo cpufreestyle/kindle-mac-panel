@@ -26,6 +26,8 @@ while true; do
     for C in cpu mem disk; do
       curl -s --max-time 6 "http://$OK:18866/sparkpng/$C.png" -o $D/spark$C.png
       cp $D/spark$C.png $DOC/spark$C.png 2>/dev/null
+      cp $D/spark$C.png $D/spark${C}_a.png
+      cp $D/spark$C.png $D/spark${C}_b.png
     done
     curl -s --max-time 10 "http://$OK:18866/screensaver.png" -o /mnt/us/usbnet/ss.png
     for R in cpu gpu ram disk; do

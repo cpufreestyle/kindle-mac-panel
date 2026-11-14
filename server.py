@@ -39,20 +39,27 @@ def spark_payload():
             "sps": _spark(HIST_SWAP, 100, 20), "spd": _spark(HIST_DISK, 100, 26)}
 
 
-def render_curve_png(vals, w=900, h=110):
-    """60 点历史曲线 PNG（白底黑折线 3px，e-ink 友好）"""
+def render_curve_png(vals, label="", w=900, h=110):
+    """60 点历史曲线 PNG（白底黑折线 3px；左上角指标名+当前值标注，e-ink 友好）"""
     import io
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     vs = [v for v in vals if v is not None][-60:]
     img = Image.new("L", (w, h), 255)
+    dr = ImageDraw.Draw(img)
+    try:
+        fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 34)
+    except Exception:
+        fnt = None
+    cur = int(vs[-1]) if vs else 0
+    if label:
+        dr.text((8, 4), "%s %d%%" % (label, cur), fill=0, font=fnt)
     if len(vs) >= 2:
-        dr = ImageDraw.Draw(img)
         mx = max(max(vs), 1.0)
         pts = []
         n = len(vs)
         for i, v in enumerate(vs):
             x = int(i * (w - 10) / (n - 1)) + 5
-            y = h - 8 - int(min(v, mx) / mx * (h - 18))
+            y = h - 8 - int(min(v, mx) / mx * (h - 52))
             pts.append((x, y))
         dr.line(pts, fill=0, width=3)
         lx, ly = pts[-1]
@@ -611,8 +618,10 @@ def render_panel():
         "x.onreadystatechange=function(){if(x.readyState==4&&x.status==200){"
         "try{var d=JSON.parse(x.responseText);for(var k in d){"
         "var e=document.getElementById(k);if(e)e.textContent=d[k];}}"
-        "catch(e){}for(var c in {cv:1,cv2:1,cv3:1}){var im=document.getElementById(c);"
-        "if(im)im.src=im.src.split('?')[0]+'?v='+Date.now();};};"
+        "catch(e){}var tg=window.__tg=!window.__tg;"
+        "for(var c in {cv:'cpu',cv2:'mem',cv3:'disk'}){var im=document.getElementById(c);"
+        "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';};};"
+        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk'};"
         "x.send()},60000);</script></head>"
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'
@@ -872,9 +881,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/sparkpng/"):
             nm = p.split("/sparkpng/")[1].split(".")[0]
-            src = {"cpu": HIST_CPU, "mem": HIST_MEM,
-                   "swap": HIST_SWAP, "disk": HIST_DISK}.get(nm) or []
-            self._send_bytes(200, render_curve_png(src), "image/png")
+            m = {"cpu": (HIST_CPU, "CPU"), "mem": (HIST_MEM, "内存"),
+                 "swap": (HIST_SWAP, "Swap"), "disk": (HIST_DISK, "磁盘")}
+            src, label = m.get(nm, ([], ""))
+            self._send_bytes(200, render_curve_png(src, label), "image/png")
             return
         if p.startswith("/spark.json"):
             self._send(200, json.dumps(spark_payload(), ensure_ascii=False),

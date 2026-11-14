@@ -20,6 +20,26 @@ HIST_MEM = []      # 内存占用历史
 HIST_TEMP = []     # CPU 温度历史（None 表示该次无读数）
 HIST_SWAP = []     # Swap 占用历史（percent）
 HIST_DISK = []     # 数据卷占用历史（percent）
+
+_BARS = "▁▂▃▄▅▆▇█"
+
+
+def _spark(vals, vmax, width=30):
+    vs = [v for v in vals if v is not None][-width:]
+    if len(vs) < 2:
+        return ""
+    step = (vmax or 1) / 7.0
+    return "".join(_BARS[min(7, int(v / step))] for v in vs)
+
+
+def spark_payload():
+    """四条趋势 span 的最新文本（供 /spark.json 与面板首渲染共用）"""
+    def _line(vals):
+        filled = [v for v in vals if v is not None]
+        return _spark(vals, 100) + " 峰%d%%" % int(max(filled or [0]))
+
+    return {"spc": _line(HIST_CPU), "spm": _line(HIST_MEM),
+            "sps": _line(HIST_SWAP), "spd": _line(HIST_DISK)}
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -554,28 +574,19 @@ def render_panel():
     aps_v = d.get("avg_pstr")
     def fnum(x, fmt):
         return (fmt % x) if isinstance(x, (int, float)) else "--"
-    # Unicode 方块趋势条：mesquite 纯文本零布局风险（▁▂▃▄▅▆▇█ 八级灰度）
-    _BARS = "▁▂▃▄▅▆▇█"
-
-    def _spark(vals, vmax, width=42):
-        vs = [v for v in vals if v is not None][-width:]
-        if len(vs) < 2:
-            return ""
-        step = (vmax or 1) / 7.0
-        return "".join(_BARS[min(7, int(v / step))] for v in vs)
-
-    cpu_spark = _spark(HIST_CPU, 100)
-    mem_spark = _spark(HIST_MEM, 100)
-    swap_spark = _spark(HIST_SWAP, 100)
-    disk_spark = _spark(HIST_DISK, 100)
-    cpu_hmax = max([v for v in HIST_CPU if v is not None] or [0])
-    mem_hmax = max([v for v in HIST_MEM if v is not None] or [0])
-    swap_hmax = max([v for v in HIST_SWAP if v is not None] or [0])
-    disk_hmax = max([v for v in HIST_DISK if v is not None] or [0])
+    sp = spark_payload()
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
-        "<title>Mac 面板</title><style>" + PANEL_CSS + "</style></head>"
+        "<title>Mac 面板</title><style>" + PANEL_CSS + "</style>"
+        # 60s 轮询同目录 spark.json 更新波形文本（番茄钟实证分钟级 DOM 更新安全；
+        # 时钟 JS 崩溃实锤是每秒高频 + 大段 innerHTML，此处只改 4 个 span 的 textContent）
+        "<script>setInterval(function(){var x=new XMLHttpRequest();"
+        "x.open('GET','spark.json?v='+Date.now(),1);"
+        "x.onreadystatechange=function(){if(x.readyState==4&&x.status==200){"
+        "try{var d=JSON.parse(x.responseText);for(var k in d){"
+        "var e=document.getElementById(k);if(e)e.textContent=d[k];}}catch(e){}}};"
+        "x.send()},60000);</script></head>"
         '<body><div id="app">'
         '<div id="head"><span id="title">MAC 面板</span>'
         '<span id="ts">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
@@ -587,7 +598,7 @@ def render_panel():
         '<div class="row"><div class="label">GPU</div>'
         '<div class="val">' + gpu_lv + '</div>'
         '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
-        '<div class="dt">趋势 ' + (cpu_spark + ' 峰' + str(int(cpu_hmax)) + '%') + ' · 15分均 ' + str(avg15) + '%</div></div>'
+        '<div class="dt">趋势 <span id="spc">' + sp["spc"] + '</span> · 15分均 ' + str(avg15) + '%</div></div>'
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
         '<div class="val">' + str(mem["usage"]) + '%</div>'
@@ -596,13 +607,13 @@ def render_panel():
         '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
         + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
-        '<div class="dt">内存趋势 ' + (mem_spark + ' 峰' + str(int(mem_hmax)) + '%') + '</div>'
-        '<div class="dt">Swap趋势 ' + (swap_spark + ' 峰' + str(int(swap_hmax)) + '%') + '</div></div>'
+        '<div class="dt">内存趋势 <span id="spm">' + sp["spm"] + '</span></div>'
+        '<div class="dt">Swap趋势 <span id="sps">' + sp["sps"] + '</span></div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
-        '<div class="dt">磁盘趋势 ' + (disk_spark + ' 峰' + str(int(disk_hmax)) + '%') + '</div>'
+        '<div class="dt">磁盘趋势 <span id="spd">' + sp["spd"] + '</span></div>'
         '<div class="dt">已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<div class="kb"><div class="kbl"><span>电池</span><span>' + kb_s + '</span></div>'
@@ -830,6 +841,10 @@ class Handler(BaseHTTPRequestHandler):
             buf = _io.BytesIO()
             render_ring(m.get(nm) or 0).convert("RGB").save(buf, "PNG", optimize=True)
             self._send_bytes(200, buf.getvalue(), "image/png")
+            return
+        if p.startswith("/spark.json"):
+            self._send(200, json.dumps(spark_payload(), ensure_ascii=False),
+                       "application/json; charset=utf-8")
             return
         if p.startswith("/laytest"):
             self._send(200, LAYTEST_HTML, "text/html; charset=utf-8")

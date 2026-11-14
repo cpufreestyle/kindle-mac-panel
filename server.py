@@ -33,9 +33,10 @@ def _spark(vals, vmax, width=26):
 
 
 def spark_payload():
-    """四条趋势 span 的最新波形（供 /spark.json 与面板首渲染共用；峰值在 .dt 静态行）"""
-    return {"spc": _spark(HIST_CPU, 100), "spm": _spark(HIST_MEM, 100),
-            "sps": _spark(HIST_SWAP, 100), "spd": _spark(HIST_DISK, 100)}
+    """四条趋势 span 的最新波形（供 /spark.json 与面板首渲染共用；峰值在 .dt 静态行）
+    层级：CPU/内存主指标 44px×21 点，磁盘次级 34px×26 点，Swap 行内小字 20 点"""
+    return {"spc": _spark(HIST_CPU, 100, 21), "spm": _spark(HIST_MEM, 100, 21),
+            "sps": _spark(HIST_SWAP, 100, 20), "spd": _spark(HIST_DISK, 100, 26)}
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -219,24 +220,25 @@ html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; widt
 #title { float:left; font-size:46px; font-weight:bold; letter-spacing:0.12em; }
 #ts { float:right; font-size:30px; color:#333; font-weight:bold; }
 .card { border:3px solid #000; padding:8px 14px 10px 14px; margin-bottom:8px; }
-.sech { font-size:30px; font-weight:bold; margin-bottom:4px; }
-.row { overflow:hidden; margin-top:8px; }
-.label { float:left; width:110px; font-size:30px; font-weight:bold; }
-.bar { overflow:hidden; height:36px; background:#fff; border:3px solid #000;
-  margin:0 14px; }
+.sech { font-size:26px; font-weight:bold; margin-bottom:4px; }
+.row { overflow:hidden; margin-top:6px; }
+.label { float:left; width:96px; font-size:24px; font-weight:bold; }
+.bar { overflow:hidden; height:22px; background:#fff; border:3px solid #000;
+  margin:0 12px; }
 .fill { height:100%; background:#000; }
-.val { float:right; width:150px; text-align:right; font-size:30px; font-weight:bold; }
+.val { float:right; width:130px; text-align:right; font-size:24px; font-weight:bold; }
 .dt { font-size:21px; color:#444; margin-top:6px; }
-.spark { font-size:34px; line-height:1; margin-top:4px; overflow:hidden; white-space:nowrap; }
-.kb { margin-top:10px; }
-.kbl { overflow:hidden; width:100%; font-size:30px; font-weight:bold; }
+.spark { font-size:44px; line-height:1; margin-top:6px; overflow:hidden; white-space:nowrap; }
+.spark.s2 { font-size:34px; margin-top:5px; }
+.kb { margin-top:8px; }
+.kbl { overflow:hidden; width:100%; font-size:24px; font-weight:bold; }
 .kbl span:first-child { float:left; }
 .kbl span:last-child { float:right; }
-.kbt { margin-top:6px; height:36px; border:3px solid #000;
+.kbt { margin-top:4px; height:22px; border:3px solid #000;
   background:#fff; overflow:hidden; }
 .kbf { height:100%; background:#000; }
-.kline { margin-top:8px; font-size:23px; color:#444; }
-#advice { font-size:23px; color:#444; margin-top:10px; }
+.kline { margin-top:6px; font-size:21px; color:#444; }
+#advice { font-size:21px; color:#444; margin-top:8px; }
 """
 
 
@@ -614,7 +616,7 @@ def render_panel():
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
-        '<div class="spark"><span id="spd">' + sp["spd"] + '</span></div>'
+        '<div class="spark s2"><span id="spd">' + sp["spd"] + '</span></div>'
         '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<div class="kb"><div class="kbl"><span>电池</span><span>' + kb_s + '</span></div>'

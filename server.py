@@ -18,6 +18,8 @@ _net_prev = {"ts": 0.0, "sent": 0, "recv": 0}
 HIST_CPU = []      # CPU 占用历史（60 点 ≈ 15 分钟）
 HIST_MEM = []      # 内存占用历史
 HIST_TEMP = []     # CPU 温度历史（None 表示该次无读数）
+HIST_SWAP = []     # Swap 占用历史（percent）
+HIST_DISK = []     # 数据卷占用历史（percent）
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -131,6 +133,12 @@ def collect():
     HIST_MEM.append(round(vm.percent, 1))
     if len(HIST_MEM) > 60:
         HIST_MEM.pop(0)
+    HIST_SWAP.append(round(sm.percent, 1))
+    if len(HIST_SWAP) > 60:
+        HIST_SWAP.pop(0)
+    HIST_DISK.append(round(du.percent, 1))
+    if len(HIST_DISK) > 60:
+        HIST_DISK.pop(0)
     _t = sensors.get("cpu_temp")
     HIST_TEMP.append(_t if isinstance(_t, (int, float)) else None)
     if len(HIST_TEMP) > 60:
@@ -558,8 +566,12 @@ def render_panel():
 
     cpu_spark = _spark(HIST_CPU, 100)
     mem_spark = _spark(HIST_MEM, 100)
+    swap_spark = _spark(HIST_SWAP, 100)
+    disk_spark = _spark(HIST_DISK, 100)
     cpu_hmax = max([v for v in HIST_CPU if v is not None] or [0])
     mem_hmax = max([v for v in HIST_MEM if v is not None] or [0])
+    swap_hmax = max([v for v in HIST_SWAP if v is not None] or [0])
+    disk_hmax = max([v for v in HIST_DISK if v is not None] or [0])
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
@@ -584,11 +596,13 @@ def render_panel():
         '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
         + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
-        '<div class="dt">内存趋势 ' + (mem_spark + ' 峰' + str(int(mem_hmax)) + '%') + '</div></div>'
+        '<div class="dt">内存趋势 ' + (mem_spark + ' 峰' + str(int(mem_hmax)) + '%') + '</div>'
+        '<div class="dt">Swap趋势 ' + (swap_spark + ' 峰' + str(int(swap_hmax)) + '%') + '</div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
+        '<div class="dt">磁盘趋势 ' + (disk_spark + ' 峰' + str(int(disk_hmax)) + '%') + '</div>'
         '<div class="dt">已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<div class="kb"><div class="kbl"><span>电池</span><span>' + kb_s + '</span></div>'

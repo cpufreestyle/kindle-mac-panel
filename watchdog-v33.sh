@@ -7,7 +7,7 @@ FLAG=/mnt/us/usbnet/ENABLED
 
 # --- 防垃圾再生（core_pattern 用有效管道丢弃，弹窗不再触发）---
 echo '|/bin/true' > /proc/sys/kernel/core_pattern 2>/dev/null
-rm -f /mnt/us/cvm_*.core /mnt/us/mesquite_*.core /mnt/us/Indexer_Dump_*.txt 2>/dev/null
+rm -f /mnt/us/cvm_* /mnt/us/mesquite_* /mnt/us/Indexer_Dump_* 2>/dev/null
 
 # --- 面板数据链路保活：主 fetchloop 不在则拉起（2026-11-14 实测 boot 后会丢）---
 pgrep -f usbnet/fetchloop.sh >/dev/null 2>&1 || (nohup /mnt/us/usbnet/fetchloop.sh >/dev/null 2>&1 &)

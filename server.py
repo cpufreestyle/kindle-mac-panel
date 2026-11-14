@@ -131,7 +131,7 @@ def render_curves_png(series, w=900, h=110, legend_items=None):
             except Exception:
                 lx += len(text) * 34 * S + 16 * S
     for vals, gray, lw in series:
-        vs = [v for v in vals if v is not None][-60:]
+        vs = [v for v in vals if v is not None][-240:]
         if len(vs) < 2:
             continue
         mx = max(max(vs), 1.0)
@@ -213,10 +213,10 @@ def collect():
     except Exception:
         gpu_live = None
     HIST_CPU.append(usage)
-    if len(HIST_CPU) > 60:
+    if len(HIST_CPU) > 240:
         HIST_CPU.pop(0)
     HIST_GPU.append(gpu_live)
-    if len(HIST_GPU) > 60:
+    if len(HIST_GPU) > 240:
         HIST_GPU.pop(0)
 
     vm = psutil.virtual_memory()
@@ -271,17 +271,17 @@ def collect():
             sensors[k] = None
 
     HIST_MEM.append(round(vm.percent, 1))
-    if len(HIST_MEM) > 60:
+    if len(HIST_MEM) > 240:
         HIST_MEM.pop(0)
     HIST_SWAP.append(round(sm.percent, 1))
-    if len(HIST_SWAP) > 60:
+    if len(HIST_SWAP) > 240:
         HIST_SWAP.pop(0)
     HIST_DISK.append(round(du.percent, 1))
-    if len(HIST_DISK) > 60:
+    if len(HIST_DISK) > 240:
         HIST_DISK.pop(0)
     _t = sensors.get("cpu_temp")
     HIST_TEMP.append(_t if isinstance(_t, (int, float)) else None)
-    if len(HIST_TEMP) > 60:
+    if len(HIST_TEMP) > 240:
         HIST_TEMP.pop(0)
     _hsave()
 
@@ -741,7 +741,7 @@ def render_panel():
         '<div class="val">' + gpu_lv + '</div>'
         '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
         '<img id="cv" src="sparkcpu.png" style="width:100%;height:84px;margin-top:3px">'
-        '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 15分均 ' + str(avg15) + '%</div></div>'
+        '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 均值 ' + str(avg15) + '%</div></div>'
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
         '<div class="val">' + str(mem["usage"]) + '%</div>'
@@ -971,7 +971,7 @@ class Handler(BaseHTTPRequestHandler):
                     _arr.append(float(_kp[_idx]))
                 except (TypeError, ValueError):
                     _arr.append(None)
-                if len(_arr) > 60:
+                if len(_arr) > 240:
                     _arr.pop(0)
             _hsave()
             try:  # 设备心跳：fetchloop 每次上报即活着（告警脚本读此文件判断失联）

@@ -24,6 +24,9 @@ HIST_GPU = []      # GPU 占用历史
 HIST_KB = []       # Kindle 电池历史（percent）
 HIST_KM = []       # Kindle 内存历史
 HIST_KD = []       # Kindle 存储历史
+HIST_TW = []       # Airport 温度历史
+HIST_TN = []       # NAND 温度历史
+HIST_TB = []       # 电池温度历史
 
 # 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
 HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
@@ -44,13 +47,17 @@ def _hload():
     HIST_KB[:] = d.get("kb") or []
     HIST_KM[:] = d.get("km") or []
     HIST_KD[:] = d.get("kd") or []
+    HIST_TW[:] = d.get("tw") or []
+    HIST_TN[:] = d.get("tn") or []
+    HIST_TB[:] = d.get("tb") or []
 
 
 def _hsave():
     try:
         json.dump({"cpu": HIST_CPU, "mem": HIST_MEM, "temp": HIST_TEMP,
                    "swap": HIST_SWAP, "disk": HIST_DISK, "gpu": HIST_GPU,
-                   "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD},
+                   "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD,
+                   "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB},
                   open(HIST_FILE, "w"))
     except Exception:
         pass
@@ -283,6 +290,11 @@ def collect():
     HIST_TEMP.append(_t if isinstance(_t, (int, float)) else None)
     if len(HIST_TEMP) > 240:
         HIST_TEMP.pop(0)
+    for _harr, _skey in ((HIST_TW, "tw0p"), (HIST_TN, "th0x"), (HIST_TB, "tb1t")):
+        _sv = sensors.get(_skey)
+        _harr.append(_sv if isinstance(_sv, (int, float)) else None)
+        if len(_harr) > 240:
+            _harr.pop(0)
     _hsave()
 
     swap_used = sm.used / 1024 ** 3
@@ -386,7 +398,7 @@ SCRIPT_JS = (
     "for(var c in window.__tgnm){var im=document.getElementById(c);"
     "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
     "}};x.send()},60000);"
-        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle'};"
+        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp'};"
 )
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
@@ -748,6 +760,7 @@ def render_panel():
         '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + '</div>'
         '</div>'
         '<div class="card"><div class="sech">Sensors</div>'
+        '<img id="cv5" src="sparktemp.png" style="width:100%;height:68px;margin-top:3px">'
         '<div class="dt">JS心跳 <span id="tick">--</span></div>'
         '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
         '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
@@ -997,9 +1010,17 @@ class Handler(BaseHTTPRequestHandler):
                     [(HIST_KB, 0, 3), (HIST_KM, 110, 2)],
                     legend_items=[("电池 %s%%" % kp[0], 0, 3),
                                   ("内存 %s%%" % kp[2], 110, 2)])
-            elif nm == "temp":
-                leg = "温度 %s" % (("%.0f°C" % HIST_TEMP[-1]) if HIST_TEMP and HIST_TEMP[-1] else "--")
-                png = render_curves_png([(HIST_TEMP, 0, 3)], legend_items=[(leg, 0, 3)])
+            elif nm == "temp":    # CPU 黑实线 + NAND 灰线 + 电池浅灰线（°C 同量纲）
+                _ct = [v for v in HIST_TEMP if v is not None]
+                _nn = [v for v in HIST_TN if v is not None]
+                _bt = [v for v in HIST_TB if v is not None]
+                leg = "CPU %s°C · NAND %s°C · 电池 %s°C" % (
+                    ("%.0f" % _ct[-1]) if _ct else "--",
+                    ("%.0f" % _nn[-1]) if _nn else "--",
+                    ("%.0f" % _bt[-1]) if _bt else "--")
+                png = render_curves_png(
+                    [(HIST_TEMP, 0, 3), (HIST_TN, 110, 2), (HIST_TB, 170, 2)],
+                    legend_items=[(leg, 0, 3)])
             else:                 # disk 黑实线 + Kindle 存储灰细线（两端存储对比）
                 kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
                 png = render_curves_png(

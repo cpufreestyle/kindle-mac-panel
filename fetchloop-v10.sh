@@ -23,7 +23,7 @@ while true; do
     cp $P $DOC/index.html 2>/dev/null
     curl -s --max-time 6 "http://$OK:18866/spark.json" -o $D/spark.json
     cp $D/spark.json $DOC/spark.json 2>/dev/null
-    for C in cpu mem disk kindle temp; do
+    for C in cpu mem swap disk net kindle temp; do
       curl -s --max-time 6 "http://$OK:18866/sparkpng/$C.png" -o $D/spark$C.png
       cp $D/spark$C.png $DOC/spark$C.png 2>/dev/null
       cp $D/spark$C.png $D/spark${C}_a.png

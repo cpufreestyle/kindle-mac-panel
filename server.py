@@ -27,6 +27,10 @@ HIST_KD = []       # Kindle 存储历史
 HIST_TW = []       # Airport 温度历史
 HIST_TN = []       # NAND 温度历史
 HIST_TB = []       # 电池温度历史
+HIST_IOR = []      # 磁盘读速率历史 MB/s
+HIST_IOW = []      # 磁盘写速率历史 MB/s
+HIST_NETD = []     # 网络下行历史 KB/s
+HIST_NETU = []     # 网络上行历史 KB/s
 
 # 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
 HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
@@ -50,6 +54,10 @@ def _hload():
     HIST_TW[:] = d.get("tw") or []
     HIST_TN[:] = d.get("tn") or []
     HIST_TB[:] = d.get("tb") or []
+    HIST_IOR[:] = d.get("ior") or []
+    HIST_IOW[:] = d.get("iow") or []
+    HIST_NETD[:] = d.get("netd") or []
+    HIST_NETU[:] = d.get("netu") or []
 
 
 def _hsave():
@@ -57,7 +65,9 @@ def _hsave():
         json.dump({"cpu": HIST_CPU, "mem": HIST_MEM, "temp": HIST_TEMP,
                    "swap": HIST_SWAP, "disk": HIST_DISK, "gpu": HIST_GPU,
                    "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD,
-                   "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB},
+                   "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB,
+                   "ior": HIST_IOR, "iow": HIST_IOW,
+                   "netd": HIST_NETD, "netu": HIST_NETU},
                   open(HIST_FILE, "w"))
     except Exception:
         pass
@@ -112,8 +122,9 @@ def _smooth_path(pts, seg=8):
 
 
 def render_curves_png(series, w=900, h=110, legend_items=None):
-    """多序列平滑曲线 PNG。series: [(vals, gray, width), ...]
-    legend_items: [(text, gray, width), ...] 每项前画对应线型样本，颜色一一对应
+    """多序列平滑曲线 PNG。series: [(vals, gray, width[, dir]), ...]
+    dir=1 向上（默认），dir=-1 向下（基线在图中部，Stats 镜像风格）
+    legend_items: [(text, gray, width), ...] 每项前画对应线型样本
     4x 超采样抗锯齿；e-ink 友好"""
     import io
     from PIL import Image, ImageDraw, ImageFont
@@ -127,9 +138,9 @@ def render_curves_png(series, w=900, h=110, legend_items=None):
         fnt = None
     if legend_items:
         lx = 8 * S
-        lyc = 20 * S                     # 图例行的垂直中心
+        lyc = 20 * S
         for text, gray, lw in legend_items:
-            sw = 36 * S                  # 线型样本长度
+            sw = 36 * S
             dr.line([(lx, lyc), (lx + sw, lyc)], fill=gray, width=lw * S)
             lx += sw + 6 * S
             dr.text((lx, 2 * S), text, fill=0, font=fnt)
@@ -137,16 +148,31 @@ def render_curves_png(series, w=900, h=110, legend_items=None):
                 lx += int(dr.textlength(text, font=fnt)) + 16 * S
             except Exception:
                 lx += len(text) * 34 * S + 16 * S
-    for vals, gray, lw in series:
-        vs = [v for v in vals if v is not None][-240:]
+    norm = []
+    bimode = any(len(item) > 3 and item[3] for item in series)
+    gmax = 1.0
+    for item in series:
+        vals, gray, lw = item[0], item[1], item[2]
+        direc = item[3] if len(item) > 3 else 0
+        vs = [abs(v) for v in vals if v is not None][-240:]
+        gmax = max(gmax, max(vs) if vs else 1.0)
+        norm.append((vs, gray, lw, direc))
+    if bimode:                           # 镜像模式：基线居中，正负各半幅
+        base = (H + 40 * S) // 2
+        half = (H - 8 * S) - base
+    else:                                # 单向模式：全幅（原布局）
+        base = H - 8 * S
+        half = H - 52 * S
+    for vs, gray, lw, direc in norm:
         if len(vs) < 2:
             continue
-        mx = max(max(vs), 1.0)
+        sign = -1 if (bimode and direc) else 1
         n = len(vs)
         pts = []
         for i, v in enumerate(vs):
             x = int(i * (W - 40) / (n - 1)) + 20
-            y = H - 8 * S - int(min(v, mx) / mx * (H - 52 * S))
+            amp = int(min(v, gmax) / gmax * half)
+            y = base - (direc * amp if bimode else amp)
             pts.append((x, y))
         dr.line(_smooth_path(pts), fill=gray, width=lw * S)
         lx2, ly2 = pts[-1]
@@ -295,6 +321,13 @@ def collect():
         _harr.append(_sv if isinstance(_sv, (int, float)) else None)
         if len(_harr) > 240:
             _harr.pop(0)
+    HIST_IOR.append(io_out.get("rMBs") if isinstance(io_out, dict) else None)
+    HIST_IOW.append(io_out.get("wMBs") if isinstance(io_out, dict) else None)
+    HIST_NETD.append(net_out.get("downKBs") if isinstance(net_out, dict) else None)
+    HIST_NETU.append(net_out.get("upKBs") if isinstance(net_out, dict) else None)
+    for _harr in (HIST_IOR, HIST_IOW, HIST_NETD, HIST_NETU):
+        if len(_harr) > 240:
+            _harr.pop(0)
     _hsave()
 
     swap_used = sm.used / 1024 ** 3
@@ -398,7 +431,7 @@ SCRIPT_JS = (
     "for(var c in window.__tgnm){var im=document.getElementById(c);"
     "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
     "}};x.send()},60000);"
-        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp'};"
+        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp',cv6:'net'};"
 )
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
@@ -752,8 +785,11 @@ def render_panel():
         '<img id="cv2" src="sparkmem.png" style="width:100%;height:110px;margin-top:3px">'
         '<div class="dt">内存峰 ' + str(_hmax(HIST_MEM)) + '% · Swap峰 ' + str(_hmax(HIST_SWAP)) + '%</div></div>'
         '<div class="card"><div class="sech">Disk</div>'
-        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:84px;margin-top:3px">'
-        '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
+        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:78px;margin-top:3px">'
+        '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + '</div></div>'
+        '<div class="card"><div class="sech">NET</div>'
+        '<img id="cv6" src="sparknet.png" style="width:100%;height:66px;margin-top:3px">'
+        '<div class="dt">IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
         '<img id="cv4" src="sparkkindle.png" style="width:100%;height:84px;margin-top:3px">'
         '<div class="dt">电池 ' + kb_s + ' · 内存 ' + km_s + ' · 存储 ' + kd_s + '</div>'
@@ -1021,12 +1057,20 @@ class Handler(BaseHTTPRequestHandler):
                 png = render_curves_png(
                     [(HIST_TEMP, 0, 3), (HIST_TN, 110, 2), (HIST_TB, 170, 2)],
                     legend_items=[(leg, 0, 3)])
-            else:                 # disk 黑实线 + Kindle 存储灰细线（两端存储对比）
-                kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
+            elif nm == "disk":    # disk 读写镜像：读向上黑实线 + 写向下灰细线
+                _r = [v for v in HIST_IOR if v is not None]
+                _w = [v for v in HIST_IOW if v is not None]
                 png = render_curves_png(
-                    [(HIST_DISK, 0, 3), (HIST_KD, 110, 2)],
-                    legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3),
-                                  ("K存储 %s%%" % kp[3], 110, 2)])
+                    [(HIST_IOR, 0, 3, 1), (HIST_IOW, 110, 2, -1)],
+                    legend_items=[("读 %sMB/s" % (("%.1f" % _r[-1]) if _r else "--"), 0, 3),
+                                  ("写 %sMB/s" % (("%.1f" % _w[-1]) if _w else "--"), 110, 2)])
+            elif nm == "net":     # 网络镜像：下行向上 + 上行向下
+                _dn = [v for v in HIST_NETD if v is not None]
+                _up = [v for v in HIST_NETU if v is not None]
+                png = render_curves_png(
+                    [(HIST_NETD, 0, 3, 1), (HIST_NETU, 110, 2, -1)],
+                    legend_items=[("下行 %sKB/s" % (("%.0f" % _dn[-1]) if _dn else "--"), 0, 3),
+                                  ("上行 %sKB/s" % (("%.0f" % _up[-1]) if _up else "--"), 110, 2)])
             self._send_bytes(200, png, "image/png")
             return
         if p.startswith("/probe.js"):

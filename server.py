@@ -756,10 +756,10 @@ def render_panel():
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
-        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:66px;margin-top:3px">'
+        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:78px;margin-top:3px">'
         '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
-        '<img id="cv4" src="sparkkindle.png" style="width:100%;height:74px;margin-top:3px">'
+        '<img id="cv4" src="sparkkindle.png" style="width:100%;height:68px;margin-top:3px">'
         '<div class="dt">电池 ' + kb_s + ' · 内存 ' + km_s + ' · 存储 ' + kd_s + '</div>'
         '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + '</div>'
         '</div>'
@@ -1007,19 +1007,21 @@ class Handler(BaseHTTPRequestHandler):
                     [(HIST_MEM, 0, 3), (HIST_SWAP, 110, 2)],
                     legend_items=[("内存 %d%%" % _hmax2(HIST_MEM), 0, 3),
                                   ("Swap %d%%" % sw_cur, 110, 2)])
-            elif nm == "kindle":  # 电池黑实线 + 内存灰线 + 存储浅灰线
+            elif nm == "kindle":  # 电池黑实线 + 内存灰细线（存储移至 Disk 卡对比）
                 kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
                 png = render_curves_png(
-                    [(HIST_KB, 0, 3), (HIST_KM, 110, 2), (HIST_KD, 170, 2)],
+                    [(HIST_KB, 0, 3), (HIST_KM, 110, 2)],
                     legend_items=[("电池 %s%%" % kp[0], 0, 3),
-                                  ("内存 %s%%" % kp[2], 110, 2),
-                                  ("存储 %s%%" % kp[3], 170, 2)])
+                                  ("内存 %s%%" % kp[2], 110, 2)])
             elif nm == "temp":
                 leg = "温度 %s" % (("%.0f°C" % HIST_TEMP[-1]) if HIST_TEMP and HIST_TEMP[-1] else "--")
                 png = render_curves_png([(HIST_TEMP, 0, 3)], legend_items=[(leg, 0, 3)])
-            else:                 # disk 单线
-                png = render_curves_png([(HIST_DISK, 0, 3)],
-                                        legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3)])
+            else:                 # disk 黑实线 + Kindle 存储灰细线（两端存储对比）
+                kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
+                png = render_curves_png(
+                    [(HIST_DISK, 0, 3), (HIST_KD, 110, 2)],
+                    legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3),
+                                  ("K存储 %s%%" % kp[3], 110, 2)])
             self._send_bytes(200, png, "image/png")
             return
         if p.startswith("/probe.js"):

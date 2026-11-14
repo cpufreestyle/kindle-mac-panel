@@ -71,9 +71,10 @@ def _smooth_path(pts, seg=8):
     return smooth
 
 
-def render_curves_png(series, w=900, h=110, legend=""):
+def render_curves_png(series, w=900, h=110, legend_items=None):
     """多序列平滑曲线 PNG。series: [(vals, gray, width), ...]
-    4x 超采样抗锯齿；左上角 legend（指标名+当前值）；e-ink 友好"""
+    legend_items: [(text, gray, width), ...] 每项前画对应线型样本，颜色一一对应
+    4x 超采样抗锯齿；e-ink 友好"""
     import io
     from PIL import Image, ImageDraw, ImageFont
     S = 4
@@ -84,8 +85,18 @@ def render_curves_png(series, w=900, h=110, legend=""):
         fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 34 * S)
     except Exception:
         fnt = None
-    if legend:
-        dr.text((8 * S, 2 * S), legend, fill=0, font=fnt)
+    if legend_items:
+        lx = 8 * S
+        lyc = 20 * S                     # 图例行的垂直中心
+        for text, gray, lw in legend_items:
+            sw = 36 * S                  # 线型样本长度
+            dr.line([(lx, lyc), (lx + sw, lyc)], fill=gray, width=lw * S)
+            lx += sw + 6 * S
+            dr.text((lx, 2 * S), text, fill=0, font=fnt)
+            try:
+                lx += int(dr.textlength(text, font=fnt)) + 16 * S
+            except Exception:
+                lx += len(text) * 34 * S + 16 * S
     for vals, gray, lw in series:
         vs = [v for v in vals if v is not None][-60:]
         if len(vs) < 2:
@@ -98,9 +109,9 @@ def render_curves_png(series, w=900, h=110, legend=""):
             y = H - 8 * S - int(min(v, mx) / mx * (H - 52 * S))
             pts.append((x, y))
         dr.line(_smooth_path(pts), fill=gray, width=lw * S)
-        lx, ly = pts[-1]
+        lx2, ly2 = pts[-1]
         r = 4 * S
-        dr.ellipse([lx - r, ly - r, lx + r, ly + r], fill=gray)
+        dr.ellipse([lx2 - r, ly2 - r, lx2 + r, ly2 + r], fill=gray)
     img = img.resize((w, h), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
@@ -109,8 +120,10 @@ def render_curves_png(series, w=900, h=110, legend=""):
 
 def render_curve_png(vals, label="", w=900, h=110):
     """单序列兼容包装"""
-    cur = int([v for v in vals if v is not None][-1]) if [v for v in vals if v is not None] else 0
-    return render_curves_png([(vals, 0, 3)], w, h, legend=("%s %d%%" % (label, cur)) if label else "")
+    filled = [v for v in vals if v is not None]
+    cur = int(filled[-1]) if filled else 0
+    items = ([(label + " %d%%" % cur, 0, 3)] if label else [])
+    return render_curves_png([(vals, 0, 3)], w, h, legend_items=items)
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -681,7 +694,7 @@ def render_panel():
         '<div class="row"><div class="label">GPU</div>'
         '<div class="val">' + gpu_lv + '</div>'
         '<div class="bar"><div class="fill" style="width:' + str(gpu_show) + '%"></div></div></div>'
-        '<img id="cv" src="sparkcpu.png" style="width:100%;height:90px;margin-top:4px">'
+        '<img id="cv" src="sparkcpu.png" style="width:100%;height:84px;margin-top:3px">'
         '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 15分均 ' + str(avg15) + '%</div></div>'
         '<div class="card"><div class="sech">RAM</div>'
         '<div class="row"><div class="label">内存</div>'
@@ -691,21 +704,21 @@ def render_panel():
         '<div class="val">' + swap_s + '</div>'
         '<div class="bar"><div class="fill" style="width:'
         + str(min(int(swap_gb / 16.0 * 100), 100)) + '%"></div></div></div>'
-        '<img id="cv2" src="sparkmem.png" style="width:100%;height:90px;margin-top:4px">'
+        '<img id="cv2" src="sparkmem.png" style="width:100%;height:84px;margin-top:3px">'
         '<div class="dt">内存峰 ' + str(_hmax(HIST_MEM)) + '% · Swap峰 ' + str(_hmax(HIST_SWAP)) + '%</div></div>'
         '<div class="card"><div class="sech">Disk</div>'
         '<div class="row"><div class="label">磁盘</div>'
         '<div class="val">' + str(disk["usage"]) + '%</div>'
         '<div class="bar"><div class="fill" style="width:' + str(disk["usage"]) + '%"></div></div></div>'
-        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:72px;margin-top:4px">'
+        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:66px;margin-top:3px">'
         '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
         '<div class="card"><div class="sech">KINDLE</div>'
-        '<img id="cv4" src="sparkkindle.png" style="width:100%;height:80px;margin-top:4px">'
+        '<img id="cv4" src="sparkkindle.png" style="width:100%;height:74px;margin-top:3px">'
         '<div class="dt">电池 ' + kb_s + ' · 内存 ' + km_s + ' · 存储 ' + kd_s + '</div>'
         '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + '</div>'
         '</div>'
         '<div class="card"><div class="sech">Sensors</div>'
-        '<img id="cv5" src="sparktemp.png" style="width:100%;height:60px;margin-top:4px">'
+        '<img id="cv5" src="sparktemp.png" style="width:100%;height:54px;margin-top:3px">'
         '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
         '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
         '</div>'
@@ -933,27 +946,33 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/sparkpng/"):
             nm = p.split("/sparkpng/")[1].split(".")[0]
-            if nm == "cpu":       # CPU 实线 + GPU 灰细线
-                gpu = [v for v in HIST_GPU if v is not None]
-                leg = "CPU %d%% · GPU %d%%" % (_hmax2(HIST_CPU), _hmax2(HIST_GPU))
+            if nm == "cpu":       # CPU 黑实线 + GPU 灰细线
+                cur_gpu = [v for v in HIST_GPU if v is not None]
+                gpu_cur = int(cur_gpu[-1]) if cur_gpu else 0
                 png = render_curves_png(
-                    [(HIST_CPU, 0, 3), (HIST_GPU, 110, 2)], legend=leg)
-            elif nm == "mem":     # 内存实线 + Swap 灰细线
-                leg = "内存 %d%% · Swap %d%%" % (_hmax2(HIST_MEM), _hmax2(HIST_SWAP))
+                    [(HIST_CPU, 0, 3), (HIST_GPU, 110, 2)],
+                    legend_items=[("CPU %d%%" % _hmax2(HIST_CPU), 0, 3),
+                                  ("GPU %d%%" % gpu_cur, 110, 2)])
+            elif nm == "mem":     # 内存黑实线 + Swap 灰细线
+                cur_sw = [v for v in HIST_SWAP if v is not None]
+                sw_cur = int(cur_sw[-1]) if cur_sw else 0
                 png = render_curves_png(
-                    [(HIST_MEM, 0, 3), (HIST_SWAP, 110, 2)], legend=leg)
-            elif nm == "kindle":  # 电池实线 + 内存灰线 + 存储浅灰线
+                    [(HIST_MEM, 0, 3), (HIST_SWAP, 110, 2)],
+                    legend_items=[("内存 %d%%" % _hmax2(HIST_MEM), 0, 3),
+                                  ("Swap %d%%" % sw_cur, 110, 2)])
+            elif nm == "kindle":  # 电池黑实线 + 内存灰线 + 存储浅灰线
                 kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
-                leg = "电池 %s%% · 内存 %s%% · 存储 %s%%" % (kp[0], kp[2], kp[3])
                 png = render_curves_png(
                     [(HIST_KB, 0, 3), (HIST_KM, 110, 2), (HIST_KD, 170, 2)],
-                    legend=leg)
+                    legend_items=[("电池 %s%%" % kp[0], 0, 3),
+                                  ("内存 %s%%" % kp[2], 110, 2),
+                                  ("存储 %s%%" % kp[3], 170, 2)])
             elif nm == "temp":
                 leg = "温度 %s" % (("%.0f°C" % HIST_TEMP[-1]) if HIST_TEMP and HIST_TEMP[-1] else "--")
-                png = render_curves_png([(HIST_TEMP, 0, 3)], legend=leg)
+                png = render_curves_png([(HIST_TEMP, 0, 3)], legend_items=[(leg, 0, 3)])
             else:                 # disk 单线
                 png = render_curves_png([(HIST_DISK, 0, 3)],
-                                        legend="磁盘 %d%%" % _hmax2(HIST_DISK))
+                                        legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3)])
             self._send_bytes(200, png, "image/png")
             return
         if p.startswith("/spark.json"):

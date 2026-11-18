@@ -3,9 +3,11 @@
 # 端口 18866，仅局域网使用。依赖：pip3 install --user psutil
 import json
 import os
+import re
 import socket
 import time
 import threading
+import urllib.request
 import psutil
 
 BASE = os.path.dirname(os.path.abspath(__file__))   # 仓库根目录（相对路径，多机复用）
@@ -15,6 +17,7 @@ from socketserver import ThreadingMixIn
 PORT = 18866
 NET_IFACE = "en0"
 _net_prev = {"ts": 0.0, "sent": 0, "recv": 0}
+_PNG_CACHE = {}  # sparkpng 渲染结果缓存 {name: (ts, png_bytes)}
 HIST_CPU = []      # CPU 占用历史（60 点 ≈ 15 分钟）
 HIST_MEM = []      # 内存占用历史
 HIST_TEMP = []     # CPU 温度历史（None 表示该次无读数）
@@ -27,9 +30,25 @@ HIST_KD = []       # Kindle 存储历史
 HIST_TW = []       # Airport 温度历史
 HIST_TN = []       # NAND 温度历史
 HIST_TB = []       # 电池温度历史
+HIST_IOR = []      # 磁盘读 MB/s
+HIST_IOW = []      # 磁盘写 MB/s
+HIST_ND = []       # 网络下行 KB/s
+HIST_NU = []       # 网络上行 KB/s
+HIST_MCOMP = []    # 压缩内存 GB
+HIST_MSWAP = []    # Swap GB
+HIST_DGXU = []     # DGX GPU 利用率（%）
+HIST_DGXT = []     # DGX GPU 温度（°C）
 
 # 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
 HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
+QSTATS_FILE = os.environ.get("QSTATS_METRICS", "/tmp/qstats-metrics.json")
+QSTATS_TTL = 15.0
+
+SAMPLE_INTERVAL = 5.0
+_SNAP_LOCK = threading.Lock()
+_SAMPLE_LOCK = threading.Lock()
+_SNAP = {"data": None}
+_SAMPLER_STARTED = False
 
 
 def _hload():
@@ -50,6 +69,14 @@ def _hload():
     HIST_TW[:] = d.get("tw") or []
     HIST_TN[:] = d.get("tn") or []
     HIST_TB[:] = d.get("tb") or []
+    HIST_IOR[:] = d.get("ior") or []
+    HIST_IOW[:] = d.get("iow") or []
+    HIST_ND[:] = d.get("nd") or []
+    HIST_NU[:] = d.get("nu") or []
+    HIST_MCOMP[:] = d.get("mcomp") or []
+    HIST_MSWAP[:] = d.get("mswap") or []
+    HIST_DGXU[:] = d.get("dgxu") or []
+    HIST_DGXT[:] = d.get("dgxt") or []
 
 
 def _hsave():
@@ -57,13 +84,66 @@ def _hsave():
         json.dump({"cpu": HIST_CPU, "mem": HIST_MEM, "temp": HIST_TEMP,
                    "swap": HIST_SWAP, "disk": HIST_DISK, "gpu": HIST_GPU,
                    "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD,
-                   "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB},
+                   "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB,
+                   "ior": HIST_IOR, "iow": HIST_IOW, "nd": HIST_ND, "nu": HIST_NU,
+                   "mcomp": HIST_MCOMP, "mswap": HIST_MSWAP,
+                   "dgxu": HIST_DGXU, "dgxt": HIST_DGXT},
                   open(HIST_FILE, "w"))
     except Exception:
         pass
 
 
 _hload()
+
+
+def _qstats_read():
+    """qstats 每 5s 导出的本地快照；过期或不存在时返回 None。"""
+    try:
+        with open(QSTATS_FILE) as f:
+            doc = json.load(f)
+        if time.time() - float(doc.get("ts", 0)) <= QSTATS_TTL:
+            return doc
+    except Exception:
+        pass
+    return None
+
+
+def _qstats_sensor(doc, key):
+    for sensor in (doc or {}).get("sensors") or []:
+        if sensor.get("key") == key:
+            value = sensor.get("value")
+            if isinstance(value, (int, float)):
+                return float(value)
+    return None
+
+
+MAGPIE_METRICS_FILE = os.environ.get("MAGPIE_METRICS_FILE", "/tmp/magpie-bridge-metrics.json")
+
+
+def _magpie_read():
+    """magpie-bridge 每 10s 导出的模型健康快照；过期或不存在时返回 None。"""
+    try:
+        with open(MAGPIE_METRICS_FILE) as f:
+            doc = json.load(f)
+        if doc.get("app") == "magpie-bridge" and time.time() - float(doc.get("ts", 0)) <= QSTATS_TTL:
+            return doc
+    except Exception:
+        pass
+    return None
+
+
+def mac_lan_ip():
+    """返回 en0 的局域网 IPv4，供 Kindle 在 USB 连接时自发现 Mac。"""
+    try:
+        for name, addrs in psutil.net_if_addrs().items():
+            if name != "en0":
+                continue
+            for addr in addrs:
+                if addr.family == socket.AF_INET and addr.address and not addr.address.startswith("127."):
+                    return addr.address
+    except Exception:
+        pass
+    return ""
 
 _BARS = "▁▂▃▄▅▆▇█"
 
@@ -86,6 +166,17 @@ def spark_payload():
 def _hmax2(vals):
     filled = [v for v in vals if v is not None]
     return int(max(filled or [0]))
+
+
+def _hlast(vals):
+    filled = [v for v in vals if v is not None]
+    return filled[-1] if filled else 0
+
+
+def _dgx_val(vals, fmt):
+    """DGX 图例值：无样本时显示 --（与 0% 区分，离线一眼可辨）"""
+    filled = [v for v in vals if v is not None]
+    return (fmt % filled[-1]) if filled else "--"
 
 
 def _smooth_path(pts, seg=8):
@@ -111,50 +202,67 @@ def _smooth_path(pts, seg=8):
     return smooth
 
 
-def render_curves_png(series, w=900, h=110, legend_items=None):
+_FONTS = {}
+def _get_font(size):
+    if size not in _FONTS:
+        from PIL import ImageFont
+        try:
+            _FONTS[size] = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", size)
+        except Exception:
+            _FONTS[size] = None
+    return _FONTS[size]
+
+def render_curves_png(series, w=900, h=110, legend_items=None, font_size=34, y_max=None, compact=False):
     """多序列平滑曲线 PNG。series: [(vals, gray, width), ...]
     legend_items: [(text, gray, width), ...] 每项前画对应线型样本，颜色一一对应
-    4x 超采样抗锯齿；e-ink 友好"""
+    2x 超采样抗锯齿；e-ink 友好"""
     import io
     from PIL import Image, ImageDraw, ImageFont
-    S = 4
+    S = 2
     W, H = w * S, h * S
     img = Image.new("L", (W, H), 255)
     dr = ImageDraw.Draw(img)
-    try:
-        fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 34 * S)
-    except Exception:
-        fnt = None
+    fnt = _get_font(font_size * S)
+    legend_h = 34 if compact else 52
     if legend_items:
         lx = 8 * S
-        lyc = 20 * S                     # 图例行的垂直中心
+        lyc = (16 if compact else 20) * S  # 图例行的垂直中心
+        block = (14 if compact else 18) * S
         for text, gray, lw in legend_items:
-            sw = 36 * S                  # 线型样本长度
-            dr.line([(lx, lyc), (lx + sw, lyc)], fill=gray, width=lw * S)
-            lx += sw + 6 * S
+            top = lyc - block // 2
+            dr.rectangle(
+                [lx, top, lx + block, top + block],
+                fill=gray,
+                outline=0 if gray >= 150 else None,
+                width=1 * S
+            )
+            lx += block + 5 * S
+            line_w = (18 if compact else 22) * S
+            dr.line([(lx, lyc), (lx + line_w, lyc)], fill=gray, width=max(2, lw) * S)
+            lx += line_w + 5 * S
             dr.text((lx, 2 * S), text, fill=0, font=fnt)
             try:
-                lx += int(dr.textlength(text, font=fnt)) + 16 * S
+                lx += int(dr.textlength(text, font=fnt)) + 12 * S
             except Exception:
-                lx += len(text) * 34 * S + 16 * S
+                lx += len(text) * font_size * S + 12 * S
     for vals, gray, lw in series:
         vs = [v for v in vals if v is not None][-240:]
         if len(vs) < 2:
             continue
-        mx = max(max(vs), 1.0)
+        mx = y_max if y_max else max(max(vs), 1.0)
         n = len(vs)
         pts = []
         for i, v in enumerate(vs):
             x = int(i * (W - 40) / (n - 1)) + 20
-            y = H - 8 * S - int(min(v, mx) / mx * (H - 52 * S))
+            y = H - 8 * S - int(min(v, mx) / mx * (H - legend_h * S))
             pts.append((x, y))
         dr.line(_smooth_path(pts), fill=gray, width=lw * S)
         lx2, ly2 = pts[-1]
         r = 4 * S
         dr.ellipse([lx2 - r, ly2 - r, lx2 + r, ly2 + r], fill=gray)
-    img = img.resize((w, h), Image.LANCZOS)
+    img = img.resize((w, h), Image.BILINEAR)
     buf = io.BytesIO()
-    img.save(buf, "PNG", optimize=True)
+    img.save(buf, "PNG", optimize=False)
     return buf.getvalue()
 
 
@@ -164,6 +272,111 @@ def render_curve_png(vals, label="", w=900, h=110):
     cur = int(filled[-1]) if filled else 0
     items = ([(label + " %d%%" % cur, 0, 3)] if label else [])
     return render_curves_png([(vals, 0, 3)], w, h, legend_items=items)
+
+
+def render_memcomp_png(mem, w=900, h=100):
+    """内存构成条：App 黑 / Wired 深灰 / Compressed 浅灰 / Free 白。"""
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+    S = 4
+    W, H = w * S, h * S
+    img = Image.new("L", (W, H), 255)
+    dr = ImageDraw.Draw(img)
+    total = max(float(mem.get("totalGB") or 0), 1.0)
+    app = max(float(mem.get("appGB") or 0), 0.0)
+    wired = max(float(mem.get("wiredGB") or 0), 0.0)
+    comp = max(float(mem.get("compGB") or 0), 0.0)
+    free = max(total - app - wired - comp, 0.0)
+    x0, x1 = 20 * S, W - 20 * S
+    y0, bh = 8 * S, 40 * S
+    dr.rectangle([x0, y0, x1, y0 + bh], outline=0, width=3 * S, fill=255)
+    x = x0
+    for value, gray in ((app, 0), (wired, 80), (comp, 160)):
+        seg = int((x1 - x0) * value / total)
+        if seg > 0:
+            dr.rectangle([x, y0 + 2 * S, min(x + seg, x1), y0 + bh - 2 * S], fill=gray)
+            x += seg
+    try:
+        fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 32 * S)
+    except Exception:
+        fnt = None
+    label = "App %.1fG · Wired %.1fG · Comp %.1fG · Free %.1fG" % (app, wired, comp, free)
+    dr.text((20 * S, 58 * S), label, fill=0, font=fnt)
+    img = img.resize((w, h), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def render_membar_png(mem, w=900, h=34):
+    """细内存构成条，无文字；用于在趋势折线图上方做当前构成快照。"""
+    import io
+    from PIL import Image, ImageDraw
+    S = 4
+    W, H = w * S, h * S
+    img = Image.new("L", (W, H), 255)
+    dr = ImageDraw.Draw(img)
+    total = max(float(mem.get("totalGB") or 0), 1.0)
+    app = max(float(mem.get("appGB") or 0), 0.0)
+    wired = max(float(mem.get("wiredGB") or 0), 0.0)
+    comp = max(float(mem.get("compGB") or 0), 0.0)
+    x0, x1 = 10 * S, W - 10 * S
+    y0, bh = 3 * S, H - 6 * S
+    dr.rectangle([x0, y0, x1, y0 + bh], outline=0, width=3 * S, fill=255)
+    x = x0
+    for value, gray in ((app, 0), (wired, 80), (comp, 160)):
+        seg = int((x1 - x0) * value / total)
+        if seg > 0:
+            dr.rectangle([x, y0 + 2 * S, min(x + seg, x1), y0 + bh - 2 * S], fill=gray)
+            x += seg
+    img = img.resize((w, h), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def render_memcombo_png(mem, w=900, h=142):
+    """内存卡单图：上方构成条 + 下方 Comp/Swap 折线。"""
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+    canvas = Image.new("L", (w, h), 255)
+    dr = ImageDraw.Draw(canvas)
+    total = max(float(mem.get("totalGB") or 0), 1.0)
+    app = max(float(mem.get("appGB") or 0), 0.0)
+    wired = max(float(mem.get("wiredGB") or 0), 0.0)
+    comp = max(float(mem.get("compGB") or 0), 0.0)
+    x0, x1, y0, bh = 10, w - 10, 4, 26
+    dr.rectangle([x0, y0, x1, y0 + bh], outline=0, width=2, fill=255)
+    x = x0
+    for value, gray in ((app, 0), (wired, 80), (comp, 160)):
+        seg = int((x1 - x0) * value / total)
+        if seg > 0:
+            dr.rectangle([x, y0 + 2, min(x + seg, x1), y0 + bh - 2], fill=gray)
+            x += seg
+    chart = render_curves_png(
+        [(HIST_MCOMP, 0, 4), (HIST_MSWAP, 110, 3)],
+        w=w, h=81, font_size=28, y_max=total,
+        legend_items=[("Comp %.1fG" % _hlast(HIST_MCOMP), 0, 4),
+                      ("Swap %.1fG" % _hlast(HIST_MSWAP), 110, 3)])
+    canvas.paste(Image.open(io.BytesIO(chart)).convert("L"), (0, 34))
+    try:
+        fnt = ImageFont.truetype("/System/Library/Fonts/STHeiti Medium.ttc", 22)
+    except Exception:
+        fnt = None
+    x, y, block = 10, 120, 14
+    for label, gray in (("App", 0), ("Wired", 80), ("Comp", 160), ("Free", 255)):
+        dr.rectangle([x, y, x + block, y + block], fill=gray, outline=0, width=1)
+        x += block + 5
+        dr.text((x, y - 3), label, fill=0, font=fnt)
+        try:
+            x += int(dr.textlength(label, font=fnt)) + 12
+        except Exception:
+            x += len(label) * 12 + 12
+    buf = io.BytesIO()
+    canvas.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
 KINDLE_K = [""]    # 设备端 fetchloop 经 ?k= 上报的 Kindle 指标 "电池;温度m°C;内存KB;存储KB"
 
 
@@ -207,8 +420,13 @@ def _top_procs_uncached(n=3):
     return result
 
 
-def collect():
+def _collect_uncached():
+    qs = _qstats_read()
     usage = round(psutil.cpu_percent(interval=0.3), 1)
+    if qs:
+        _v = (qs.get("cpu") or {}).get("usage")
+        if isinstance(_v, (int, float)):
+            usage = round(_v * 100, 1)
     # GPU 占用现采（ioreg ~150ms，摆脱 30s sensors 缓存）
     try:
         import subprocess as _sp
@@ -219,6 +437,10 @@ def collect():
         gpu_live = int(_m.group(1)) if _m else None
     except Exception:
         gpu_live = None
+    if qs:
+        _v = (qs.get("gpu") or {}).get("usage")
+        if isinstance(_v, (int, float)):
+            gpu_live = round(_v * 100)
     HIST_CPU.append(usage)
     if len(HIST_CPU) > 240:
         HIST_CPU.pop(0)
@@ -229,12 +451,51 @@ def collect():
     vm = psutil.virtual_memory()
     sm = psutil.swap_memory()
     du = psutil.disk_usage("/System/Volumes/Data")   # 真实数据卷（/ 是系统快照假象）
+    mem_used, mem_total, mem_pct = vm.used, vm.total, vm.percent
+    disk_used, disk_free, disk_total, disk_pct = du.used, du.free, du.total, du.percent
+    mem_app, mem_wired, mem_comp = vm.used, 0.0, 0.0
+    mem_swap, mem_pressure = sm.used, "--"
+    if qs:
+        _r = qs.get("ram") or {}
+        if isinstance(_r.get("used"), (int, float)):
+            mem_used = _r["used"]
+        if isinstance(_r.get("total"), (int, float)):
+            mem_total = _r["total"]
+        if isinstance(_r.get("usage"), (int, float)):
+            mem_pct = _r["usage"] * 100
+        if isinstance(_r.get("app"), (int, float)):
+            mem_app = _r["app"]
+        if isinstance(_r.get("wired"), (int, float)):
+            mem_wired = _r["wired"]
+        if isinstance(_r.get("compressed"), (int, float)):
+            mem_comp = _r["compressed"]
+        if isinstance(_r.get("swap"), (int, float)):
+            mem_swap = _r["swap"]
+        if isinstance(_r.get("pressure"), str):
+            mem_pressure = _r["pressure"]
+        _d = qs.get("disk") or {}
+        if isinstance(_d.get("used"), (int, float)):
+            disk_used = _d["used"]
+        if isinstance(_d.get("free"), (int, float)):
+            disk_free = _d["free"]
+        if isinstance(_d.get("total"), (int, float)):
+            disk_total = _d["total"]
+        if isinstance(_d.get("usage"), (int, float)):
+            disk_pct = _d["usage"] * 100
 
     batt = psutil.sensors_battery()
     batt_out = None
     if batt:
         left = batt.secsleft if isinstance(batt.secsleft, int) and batt.secsleft > 0 else None
         batt_out = {"percent": batt.percent, "charging": bool(batt.power_plugged), "left": left}
+    if qs:
+        _b = qs.get("battery") or {}
+        if isinstance(_b.get("level"), (int, float)):
+            batt_out = {
+                "percent": round(_b["level"] * 100, 1),
+                "charging": bool(_b.get("charging")),
+                "left": (batt_out or {}).get("left"),
+            }
 
     io = psutil.disk_io_counters()
     io_out = None
@@ -244,7 +505,14 @@ def collect():
             dt = now - _IO_PREV["ts"]
             io_out = {"rMBs": round(max(0, io.read_bytes - _IO_PREV["r"]) / dt / 1048576, 1),
                       "wMBs": round(max(0, io.write_bytes - _IO_PREV["w"]) / dt / 1048576, 1)}
-        _IO_PREV.update(ts=now, r=io.read_bytes, w=io.write_bytes)
+            _IO_PREV.update(ts=now, r=io.read_bytes, w=io.write_bytes)
+        elif not _IO_PREV["ts"]:
+            _IO_PREV.update(ts=now, r=io.read_bytes, w=io.write_bytes)
+    if qs:
+        _io = qs.get("disk_io") or {}
+        _r, _w = _io.get("read"), _io.get("write")
+        if isinstance(_r, (int, float)) and isinstance(_w, (int, float)):
+            io_out = {"rMBs": round(_r / 1048576, 1), "wMBs": round(_w / 1048576, 1)}
 
     nio = psutil.net_io_counters(pernic=True).get(NET_IFACE)
     net_out = None
@@ -256,8 +524,17 @@ def collect():
             ds = max(0, nio.bytes_sent - _net_prev["sent"])
             _NET_MB[0] += (dr + ds) / 1048576.0
             r["totalMB"] = round(_NET_MB[0], 1)
-        _net_prev.update(ts=now, recv=nio.bytes_recv, sent=nio.bytes_sent)
+            _net_prev.update(ts=now, recv=nio.bytes_recv, sent=nio.bytes_sent)
+        elif not _net_prev["ts"]:
+            _net_prev.update(ts=now, recv=nio.bytes_recv, sent=nio.bytes_sent)
         net_out = r
+    if qs:
+        _n = qs.get("net") or {}
+        _down, _up = _n.get("download"), _n.get("upload")
+        if isinstance(_down, (int, float)) and isinstance(_up, (int, float)):
+            net_out = dict(net_out or {"totalMB": round(_NET_MB[0], 1)})
+            net_out["downKBs"] = round(_down / 1024.0, 1)
+            net_out["upKBs"] = round(_up / 1024.0, 1)
 
     l1, l5, l15 = psutil.getloadavg()
     boot = psutil.boot_time()
@@ -276,14 +553,31 @@ def collect():
     for k in ("pstr", "avg_pstr", "tb1t", "th0x", "tw0p", "id0r", "vd0r"):
         if not isinstance(sensors.get(k), (int, float)):
             sensors[k] = None
+    if qs:
+        for key, sensor_key in (("pstr", "PSTR"), ("avg_pstr", "Average System Total"),
+                                ("tb1t", "TB1T"), ("th0x", "TH0x"), ("tw0p", "TW0P"),
+                                ("id0r", "ID0R"), ("vd0r", "VD0R")):
+            _v = _qstats_sensor(qs, sensor_key)
+            if _v is not None:
+                sensors[key] = _v
+        _v = _qstats_sensor(qs, "F0Ac")
+        if _v is not None:
+            sensors["fan"] = _v
+            sensors["f0ac"] = _v
+        _v = _qstats_sensor(qs, "Hottest CPU") or _qstats_sensor(qs, "Average CPU")
+        if _v is not None:
+            sensors["cpu_temp"] = _v
+        _v = _qstats_sensor(qs, "Average GPU")
+        if _v is not None:
+            sensors["gpu"] = _v
 
-    HIST_MEM.append(round(vm.percent, 1))
+    HIST_MEM.append(round(mem_pct, 1))
     if len(HIST_MEM) > 240:
         HIST_MEM.pop(0)
     HIST_SWAP.append(round(sm.percent, 1))
     if len(HIST_SWAP) > 240:
         HIST_SWAP.pop(0)
-    HIST_DISK.append(round(du.percent, 1))
+    HIST_DISK.append(round(disk_pct, 1))
     if len(HIST_DISK) > 240:
         HIST_DISK.pop(0)
     _t = sensors.get("cpu_temp")
@@ -295,6 +589,20 @@ def collect():
         _harr.append(_sv if isinstance(_sv, (int, float)) else None)
         if len(_harr) > 240:
             _harr.pop(0)
+    HIST_IOR.append(io_out.get("rMBs") if io_out else None)
+    HIST_IOW.append(io_out.get("wMBs") if io_out else None)
+    HIST_ND.append(net_out.get("downKBs") if net_out else None)
+    HIST_NU.append(net_out.get("upKBs") if net_out else None)
+    HIST_MCOMP.append(round(mem_comp / 1024 ** 3, 2) if mem_comp else 0.0)
+    HIST_MSWAP.append(round(mem_swap / 1024 ** 3, 2) if mem_swap else 0.0)
+    # DGX（spark-monitor 主机）GPU 利用率/温度：与 Mac 指标同频采样，面板和 Kindle 共用同一张折线
+    _dgx = spark_snapshot()
+    HIST_DGXU.append(_dgx.get("util") if isinstance(_dgx.get("util"), (int, float)) else None)
+    HIST_DGXT.append(_dgx.get("temp") if isinstance(_dgx.get("temp"), (int, float)) else None)
+    for _harr in (HIST_IOR, HIST_IOW, HIST_ND, HIST_NU, HIST_MCOMP, HIST_MSWAP,
+                  HIST_DGXU, HIST_DGXT):
+        if len(_harr) > 240:
+            _harr.pop(0)
     _hsave()
 
     swap_used = sm.used / 1024 ** 3
@@ -304,16 +612,21 @@ def collect():
         "ts": time.strftime("%H:%M:%S"),
         "cpu": {"usage": usage, "avg15": avg15, "temp": sensors.get("cpu_temp")},
         "mem": {
-            "usedGB": round(vm.used / 1024 ** 3, 1),
-            "totalGB": round(vm.total / 1024 ** 3, 1),
-            "usage": round(vm.percent, 1),
+            "usedGB": round(mem_used / 1024 ** 3, 1),
+            "totalGB": round(mem_total / 1024 ** 3, 1),
+            "usage": round(mem_pct, 1),
+            "appGB": round(mem_app / 1024 ** 3, 1),
+            "wiredGB": round(mem_wired / 1024 ** 3, 1),
+            "compGB": round(mem_comp / 1024 ** 3, 1),
+            "swapGB": round(mem_swap / 1024 ** 3, 1),
+            "pressure": mem_pressure,
         },
             "swap": {"usedGB": round(sm.used / 1024 ** 3, 1)},
         "disk": {
-            "usedGB": round(du.used / 1024 ** 3, 1),
-            "freeGB": round(du.free / 1024 ** 3, 0),
-            "totalGB": round(du.total / 1024 ** 3, 1),
-            "usage": round(du.percent, 1),
+            "usedGB": round(disk_used / 1024 ** 3, 1),
+            "freeGB": round(disk_free / 1024 ** 3, 0),
+            "totalGB": round(disk_total / 1024 ** 3, 1),
+            "usage": round(disk_pct, 1),
         },
         "batt": batt_out,
         "io": io_out,
@@ -329,7 +642,47 @@ def collect():
         "net": net_out,
         "load": {"l1": round(l1, 2), "l5": round(l5, 2), "l15": round(l15, 2)},
         "uptime": uptime,
+        "source": "qstats" if qs else "local",
     }
+
+
+def _sample_and_store():
+    with _SAMPLE_LOCK:
+        data = _collect_uncached()
+    with _SNAP_LOCK:
+        _SNAP["data"] = data
+    return data
+
+
+def _start_sampler():
+    global _SAMPLER_STARTED
+    if _SAMPLER_STARTED:
+        return
+    _SAMPLER_STARTED = True
+
+    def loop():
+        while True:
+            try:
+                _sample_and_store()
+            except Exception:
+                import traceback
+                try:
+                    with open("/tmp/kindle-sampler.log", "a") as f:
+                        f.write(time.strftime("%H:%M:%S ") + traceback.format_exc() + "\n")
+                except Exception:
+                    pass
+            time.sleep(SAMPLE_INTERVAL)
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def collect():
+    _start_sampler()
+    with _SNAP_LOCK:
+        data = _SNAP["data"]
+    if data is not None:
+        return data
+    return _sample_and_store()
 
 
 _WX = {"txt": "", "range": "", "sun": ""}   # 天气（wx.sh launchd 每 30 分钟写 /tmp/kindle-wx.json）
@@ -348,22 +701,66 @@ def _wx_read():
         _WX["sun"] = ""
 
 
+
+# ── DGX / spark-monitor 接入 ────────────────────────────────────────────────
+# spark-monitor 在 127.0.0.1:8888 提供 /api/status（本地只读）。这里做 5s 缓存，
+# 任何失败都降级成 ok=False，绝不让 Kindle 页面 500。
+SPARK_URL = "http://127.0.0.1:8888/api/status"
+_SPARK = {"ts": 0.0, "data": None}
+
+
+def spark_snapshot(ttl=5):
+    now = time.time()
+    if _SPARK["data"] is not None and now - _SPARK["ts"] < ttl:
+        return _SPARK["data"]
+    out = {"ok": False, "host": "DGX", "util": None, "temp": None,
+           "power": None, "mem_used": None, "mem_total": None, "ssh": "offline"}
+    try:
+        with urllib.request.urlopen(SPARK_URL, timeout=1.5) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        hosts = d.get("hosts") or {}
+        h = hosts.get("spark") or (list(hosts.values())[0] if hosts else {})
+        gpu = h.get("gpu") or {}
+        mem = h.get("mem") or {}
+        out = {
+            "ok": True,
+            "host": h.get("hostname") or "DGX",
+            "util": gpu.get("util"),
+            "temp": gpu.get("temp"),
+            "power": gpu.get("power"),
+            "mem_used": mem.get("used"),
+            "mem_total": mem.get("total"),
+            "ssh": ((d.get("ssh") or {}).get("status") or "unknown"),
+        }
+    except Exception:
+        pass
+    _SPARK["data"] = out
+    _SPARK["ts"] = now
+    return out
+
+
 PANEL_CSS = """
 html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; width:100%;
   overflow:hidden; font-family:"Microsoft YaHei","Noto Sans CJK",sans-serif; }
-#app { min-height:100%; box-sizing:border-box; padding:20px 36px 14px 36px; }
-#head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:8px; }
-#title { float:left; font-size:46px; font-weight:bold; letter-spacing:0.12em; }
-#ts { float:right; font-size:30px; color:#333; font-weight:bold; }
-.card { border:3px solid #000; padding:8px 14px 10px 14px; margin-bottom:8px; }
-.sech { font-size:26px; font-weight:bold; margin-bottom:4px; }
+#app { min-height:100%; box-sizing:border-box; padding:8px 22px 10px 22px; }
+#head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:4px; }
+#title { float:left; font-size:44px; font-weight:bold; letter-spacing:0.08em; }
+#ts { float:right; font-size:26px; color:#222; font-weight:bold; }
+.card { box-sizing:border-box; border:3px solid #000; padding:4px 8px 4px 8px; margin-bottom:3px; }
+.card.compact { padding:2px 8px 3px 8px; }
+.sech { font-size:26px; font-weight:bold; margin-bottom:0; }
+.sech.compact { font-size:22px; }
 .row { overflow:hidden; margin-top:6px; }
 .label { float:left; width:96px; font-size:24px; font-weight:bold; }
 .bar { overflow:hidden; height:22px; background:#fff; border:3px solid #000;
   margin:0 12px; }
 .fill { height:100%; background:#000; }
 .val { float:right; width:130px; text-align:right; font-size:24px; font-weight:bold; }
-.dt { font-size:21px; color:#444; margin-top:6px; }
+.big { font-size:40px; font-weight:bold; line-height:1.1; margin-top:2px; }
+.big .g { color:#666; }
+.kv { font-size:26px; font-weight:bold; color:#111; margin-top:2px; }
+.dt { font-size:22px; color:#333; margin-top:2px; font-weight:bold; }
+img.chart { display:block; width:100%; height:auto; margin-top:1px; }
 .spark { font-size:44px; line-height:1; margin-top:6px; overflow:hidden; white-space:nowrap; }
 .spark.s2 { font-size:34px; margin-top:5px; }
 .kb { margin-top:8px; }
@@ -373,8 +770,8 @@ html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; widt
 .kbt { margin-top:4px; height:22px; border:3px solid #000;
   background:#fff; overflow:hidden; }
 .kbf { height:100%; background:#000; }
-.kline { margin-top:6px; font-size:21px; color:#444; }
-#advice { font-size:21px; color:#444; margin-top:8px; }
+.kline { margin-top:4px; font-size:24px; color:#333; font-weight:bold; }
+#advice { font-size:24px; color:#222; margin-top:4px; font-weight:bold; }
 """
 
 
@@ -383,6 +780,7 @@ _COND = {}   # 建议防抖：条件 -> 连续命中次数（fetchloop 15s 一�
 # 面板页面轮询脚本（外链 script.js）——象棋/番茄钟验证过的加载模式
 SCRIPT_JS = (
     "var __tg=false;"
+    "var _vp=new Image();_vp.src='/vp?w='+window.innerWidth+'&h='+window.innerHeight;"
     "var tk0=document.getElementById('tick');"
     "if(tk0)tk0.textContent='已加载';"          # 探针①：script.js 一执行立即置位
     "setInterval(function(){"
@@ -397,8 +795,8 @@ SCRIPT_JS = (
     "var tg=(__tg=!__tg);"
     "for(var c in window.__tgnm){var im=document.getElementById(c);"
     "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
-    "}};x.send()},60000);"
-        "window.__tgnm={cv:'cpu',cv2:'mem',cv3:'disk',cv4:'kindle',cv5:'temp'};"
+    "}};x.send()},8000);"
+        "window.__tgnm={cv:'cpu',cv2:'membar',cv3:'diskread',cv4:'diskwrite',cv5:'netdown',cv6:'netup',cv7:'memtrend',cv8:'dgxutil',cv9:'dgxtemp'};"
 )
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
@@ -456,9 +854,9 @@ def _advice(d, kparts):
     tips = []
     swp = (d.get("swap") or {}).get("usedGB") or 0
     if _bump("swap_hi", swp >= 4):
-        tips.append("内存压力高(%sG) 建议重启 Mac" % swp)
+        tips.append("Swap 高(%sG) 建议重启 Mac" % swp)
     elif _bump("swap_mid", swp >= 2):
-        tips.append("内存有压力(%sG)" % swp)
+        tips.append("Swap 偏高(%sG)" % swp)
     cpu = (d.get("cpu") or {}).get("avg15") or 0
     if _bump("cpu_hi", cpu >= 70):
         tips.append("CPU 高载(%d%%) 查后台程序" % cpu)
@@ -583,6 +981,9 @@ def render_history():
 def render_panel():
     d = collect()
     _wx_read()
+
+    # DGX / Codex status stay off the main panel so the Kindle layout fits one screen.
+
     cpu = d.get("cpu") or {"usage": 0}
     mem = d.get("mem") or {"usedGB": 0, "totalGB": 0, "usage": 0}
     disk = d.get("disk") or {"usage": 0}
@@ -719,10 +1120,12 @@ def render_panel():
     tp = top_procs()
     tp_s = " · ".join(nm[:10] for nm, v in tp)   # 只列进程名，实时百分比已删
     avg15 = cpu.get("avg15") or cpu_show
+    pressure_s = {"normal": "正常", "warning": "偏高", "critical": "高"}.get(
+        str(mem.get("pressure", "")).lower(), str(mem.get("pressure") or "--"))
     free_gb = (mem.get("totalGB") or 0) - (mem.get("usedGB") or 0)
     used_gb = mem.get("usedGB") or 0
     disk_used = disk.get("usedGB") or 0
-    fan_v = d.get("f0ac")
+    fan_v = d.get("fan")
     tw0p_v = d.get("tw0p")
     th0x_v = d.get("th0x")
     tb1t_v = d.get("tb1t")
@@ -734,36 +1137,57 @@ def render_panel():
     def _hmax(vals):
         return int(max([v for v in vals if v is not None] or [0]))
     sp = spark_payload()
+    _sp = spark_snapshot()
+    _sp_on = bool(_sp.get("ok")) and _sp.get("ssh") == "connected"
+    _sp_state = "在线" if _sp_on else ("未连" if _sp.get("ok") else "离线")
+    _sp_host = _sp.get("host") or "DGX"
+    _sp_big = ("%.0f%%" % _sp["util"]) if isinstance(_sp.get("util"), (int, float)) else "--"
+    _sp_tmp = ("%.0f°C" % _sp["temp"]) if isinstance(_sp.get("temp"), (int, float)) else "--"
+    _sp_pwr = ("%.1fW" % _sp["power"]) if isinstance(_sp.get("power"), (int, float)) else "--"
+    _mu, _mt = _sp.get("mem_used"), _sp.get("mem_total")
+    _sp_mem = ("%.0f/%.0fG" % (_mu / 1024.0, _mt / 1024.0)) if isinstance(_mu, (int, float)) and isinstance(_mt, (int, float)) else "--"
+    qstats_linked = d.get("source") == "qstats"
+    src_badge = " · Q · P3" if qstats_linked else " · P3"
+    panel_title = "QSTATS" if qstats_linked else "MAC 面板"
+    _rev = "_a" if int(time.time()) % 2 == 0 else "_b"
+    _temp_img = "sparkmemtrend" + _rev + ".png"
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">'
+        '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">'
+        '<meta http-equiv="Pragma" content="no-cache">'
+        '<meta http-equiv="Expires" content="0">'
         # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
         "<title>Mac 面板</title><style>" + PANEL_CSS + "</style>"
         # 外链 script.js（象棋/番茄钟验证过的加载模式，内联 script 执行不稳定）：
         # 每 60s 轮询 spark.json 更新文本 + img 双缓冲切换；tick 探针显示 JS 心跳分钟
         '<script src="probe.js"></script></head>'
         '<body><div id="app">'
-        '<div id="head"><span id="title">MAC 面板</span>'
-        '<span id="ts">' + d["ts"] + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
-        # Stats 式分节（全部块级 + 已验证单层 flex 行）
-        '<div class="card"><div class="sech">CPU</div>'
-        '<img id="cv" src="sparkcpu.png" style="width:100%;height:110px;margin-top:3px">'
-        '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 均值 ' + str(avg15) + '%</div></div>'
-        '<div class="card"><div class="sech">RAM</div>'
-        '<img id="cv2" src="sparkmem.png" style="width:100%;height:110px;margin-top:3px">'
-        '<div class="dt">内存峰 ' + str(_hmax(HIST_MEM)) + '% · Swap峰 ' + str(_hmax(HIST_SWAP)) + '%</div></div>'
-        '<div class="card"><div class="sech">Disk</div>'
-        '<img id="cv3" src="sparkdisk.png" style="width:100%;height:84px;margin-top:3px">'
-        '<div class="dt">磁盘峰 ' + str(_hmax(HIST_DISK)) + '% · 已用 ' + fnum(disk_used, "%.0fG") + ' · 剩余 ' + disk_free_s + ' · IP ' + mac_ip + '</div></div>'
-        '<div class="card"><div class="sech">KINDLE</div>'
-        '<img id="cv4" src="sparkkindle.png" style="width:100%;height:84px;margin-top:3px">'
-        '<div class="dt">电池 ' + kb_s + ' · 内存 ' + km_s + ' · 存储 ' + kd_s + '</div>'
-        '<div class="kline">温度 ' + kt_s + " · " + (_WX["sun"] or " ") + " · 24h峰 " + (peak24 or "积累中") + '</div>'
+        '<div id="head"><span id="title">' + panel_title + '</span>'
+        '<span id="ts">' + d["ts"] + src_badge + ((" · " + _WX["txt"]) if _WX["txt"] else "") + "</span></div>"
+        # Stats 式分节（全部块级 + 已验证单层 float 行）
+        '<div class="card"><div class="sech">CPU / GPU</div>'
+        '<img id="cv" src="sparkcpu' + _rev + '.png" style="width:100%;height:auto">'
+        '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 15分均 ' + str(avg15) + '% · CPU ' + temp_s + '</div></div>'
+        '<div class="card"><div class="sech">RAM · ' + fnum(mem.get("usage"), "%.0f%%") + ' · 压力 ' + pressure_s + '</div>'
+        '<img id="cv2" class="chart" src="sparkmembar' + _rev + '.png">'
+        '<div class="dt">App ' + fnum(mem.get("appGB"), "%.1f") + ' · Wired ' + fnum(mem.get("wiredGB"), "%.1f") + ' · Comp ' + fnum(mem.get("compGB"), "%.1f") + ' · Free ' + fnum((mem.get("totalGB") or 0) - (mem.get("appGB") or 0) - (mem.get("wiredGB") or 0) - (mem.get("compGB") or 0), "%.1f") + 'G</div></div>'
+        '<div class="card compact"><div class="sech compact">DISK · ' + fnum(disk.get("usage"), "%.0f%%") + ' · 剩 ' + disk_free_s + '</div>'
+        '<img id="cv3" class="chart" src="sparkdiskread' + _rev + '.png">'
+        '<img id="cv4" class="chart" src="sparkdiskwrite' + _rev + '.png">'
         '</div>'
-        '<div class="card"><div class="sech">Sensors</div>'
-        '<img id="cv5" src="sparktemp.png" style="width:100%;height:68px;margin-top:3px">'
-        '<div class="dt">JS心跳 <span id="tick">--</span></div>'
-        '<div class="kline">风扇 ' + fnum(fan_v, "%.0f") + ' rpm · Airport ' + fnum(tw0p_v, "%.1f°C") + ' · NAND ' + fnum(th0x_v, "%.1f°C") + '</div>'
-        '<div class="kline">电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）· 供电 ' + pwr_s + '</div>'
+        '<div class="card compact"><div class="sech compact">NET · ' + mac_ip + '</div>'
+        '<img id="cv5" class="chart" src="sparknetdown' + _rev + '.png">'
+        '<img id="cv6" class="chart" src="sparknetup' + _rev + '.png">'
+        '</div>'
+        '<div class="card"><div class="sech">TEMP · CPU ' + temp_s + '</div>'
+        '<img id="cv7" class="chart" src="' + _temp_img + '">'
+        '<div class="kv">NAND ' + fnum(th0x_v, "%.1f°C") + ' · 电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 风扇 ' + fnum(fan_v, "%.0f") + ' rpm</div>'
+        '<div class="kv">Kindle ' + kb_s + ' · ' + km_s + ' · ' + kd_s + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）</div>'
+        '</div>'
+        '<div class="card compact"><div class="sech compact">DGX · ' + _sp_host + ' · ' + _sp_state + ' · GPU ' + _sp_big + ' · ' + _sp_tmp + ' · ' + _sp_pwr + '</div>'
+        '<img id="cv8" class="chart" src="sparkdgxutil' + _rev + '.png">'
+        '<img id="cv9" class="chart" src="sparkdgxtemp' + _rev + '.png">'
         '</div>'
         '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + '</div>'
         "</div></body></html>"
@@ -923,19 +1347,25 @@ def render_screensaver():
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype):
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body.encode())
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body if isinstance(body, bytes) else body.encode())
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_bytes(self, code, data, ctype):
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_PUT(self):
         self.do_POST()
@@ -960,6 +1390,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         p, _, qs = self.path.partition("?")
+        # 面板 HTML 里图片用相对双缓冲名（sparkcpu_a.png）：Kindle 侧命中本地文件，
+        # 浏览器经 HTTP 打开时映射回 /sparkpng/ 生成，同一份 HTML 两端都能出图。
+        _m_sp = re.match(
+            r"^/spark(cpu|membar|memtrend|diskread|diskwrite|netdown|netup|dgxutil|dgxtemp)_[ab]\.png$", p)
+        if _m_sp:
+            p = "/sparkpng/" + _m_sp.group(1) + ".png"
         if qs.startswith("k="):
             KINDLE_K[0] = qs[2:]
             _kp = (KINDLE_K[0].split(";") + ["", "", "", "", ""])[:5]
@@ -982,7 +1418,8 @@ class Handler(BaseHTTPRequestHandler):
             m = {"cpu": (d2.get("cpu") or {}).get("usage"),
                  "gpu": d2.get("gpu"),
                  "ram": (d2.get("mem") or {}).get("usage"),
-                 "disk": (d2.get("disk") or {}).get("usage")}
+                 "disk": (d2.get("disk") or {}).get("usage"),
+                 "dgx": (spark_snapshot().get("util") or 0)}
             import io as _io
             buf = _io.BytesIO()
             render_ring(m.get(nm) or 0).convert("RGB").save(buf, "PNG", optimize=True)
@@ -990,43 +1427,105 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/sparkpng/"):
             nm = p.split("/sparkpng/")[1].split(".")[0]
-            if nm == "cpu":       # CPU 黑实线 + GPU 灰细线
-                cur_gpu = [v for v in HIST_GPU if v is not None]
-                gpu_cur = int(cur_gpu[-1]) if cur_gpu else 0
-                png = render_curves_png(
-                    [(HIST_CPU, 0, 3), (HIST_GPU, 110, 2)],
-                    legend_items=[("CPU %d%%" % _hmax2(HIST_CPU), 0, 3),
-                                  ("GPU %d%%" % gpu_cur, 110, 2)])
-            elif nm == "mem":     # 内存黑实线 + Swap 灰细线（同图双线）
-                cur_sw = [v for v in HIST_SWAP if v is not None]
-                sw_cur = int(cur_sw[-1]) if cur_sw else 0
-                png = render_curves_png(
-                    [(HIST_MEM, 0, 3), (HIST_SWAP, 110, 2)],
-                    legend_items=[("内存 %d%%" % _hmax2(HIST_MEM), 0, 3),
-                                  ("Swap %d%%" % sw_cur, 110, 2)])
-            elif nm == "kindle":  # 电池黑实线 + 内存灰细线（存储移至 Disk 卡对比）
-                kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
-                png = render_curves_png(
-                    [(HIST_KB, 0, 3), (HIST_KM, 110, 2)],
-                    legend_items=[("电池 %s%%" % kp[0], 0, 3),
-                                  ("内存 %s%%" % kp[2], 110, 2)])
-            elif nm == "temp":    # CPU 黑实线 + NAND 灰线 + 电池浅灰线（°C 同量纲）
-                _ct = [v for v in HIST_TEMP if v is not None]
-                _nn = [v for v in HIST_TN if v is not None]
-                _bt = [v for v in HIST_TB if v is not None]
-                leg = "CPU %s°C · NAND %s°C · 电池 %s°C" % (
-                    ("%.0f" % _ct[-1]) if _ct else "--",
-                    ("%.0f" % _nn[-1]) if _nn else "--",
-                    ("%.0f" % _bt[-1]) if _bt else "--")
-                png = render_curves_png(
-                    [(HIST_TEMP, 0, 3), (HIST_TN, 110, 2), (HIST_TB, 170, 2)],
-                    legend_items=[(leg, 0, 3)])
-            else:                 # disk 黑实线 + Kindle 存储灰细线（两端存储对比）
-                kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
-                png = render_curves_png(
-                    [(HIST_DISK, 0, 3), (HIST_KD, 110, 2)],
-                    legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3),
-                                  ("K存储 %s%%" % kp[3], 110, 2)])
+            # PNG 缓存：同一张图 2s 内重复请求直接返回，免重复渲染
+            _cache_key = nm
+            _now = time.time()
+            if _PNG_CACHE.get(_cache_key, (0, b''))[0] + 2 > _now:
+                png = _PNG_CACHE[_cache_key][1]
+            else:
+                if nm == "membar":    # 内存构成条 + Comp/Swap 折线（单图）
+                    png = render_memcombo_png(collect().get("mem") or {})
+                elif nm == "memcomp": # 内存构成条（大图，兼容旧页）
+                    png = render_memcomp_png(collect().get("mem") or {})
+                elif nm == "memtrend":  # 独立 CPU/NAND/电池温度图（复用已下载槽位）
+                    _ct = _hlast(HIST_TEMP)
+                    _nn = _hlast(HIST_TN)
+                    _bt = _hlast(HIST_TB)
+                    png = render_curves_png(
+                        [(HIST_TEMP, 0, 4), (HIST_TN, 110, 3), (HIST_TB, 170, 2)],
+                        h=70, font_size=28, y_max=120,
+                        legend_items=[
+                            ("CPU %s°C" % (("%.0f" % _ct) if _ct else "--"), 0, 4),
+                            ("NAND %s°C" % (("%.0f" % _nn) if _nn else "--"), 110, 3),
+                            ("电池 %s°C" % (("%.0f" % _bt) if _bt else "--"), 170, 2),
+                        ])
+                elif nm == "cpu":     # CPU 黑实线 + GPU 灰细线
+                    cur_gpu = [v for v in HIST_GPU if v is not None]
+                    gpu_cur = int(cur_gpu[-1]) if cur_gpu else 0
+                    png = render_curves_png(
+                        [(HIST_CPU, 0, 4), (HIST_GPU, 110, 3)],
+                        h=120, font_size=40,
+                        legend_items=[("CPU %d%%" % _hmax2(HIST_CPU), 0, 3),
+                                      ("GPU %d%%" % gpu_cur, 110, 2)])
+                elif nm == "mem":     # 内存黑实线 + Swap 灰细线（同图双线）
+                    cur_sw = [v for v in HIST_SWAP if v is not None]
+                    sw_cur = int(cur_sw[-1]) if cur_sw else 0
+                    png = render_curves_png(
+                        [(HIST_MEM, 0, 4), (HIST_SWAP, 110, 3)],
+                        h=120, font_size=40,
+                        legend_items=[("内存 %d%%" % _hmax2(HIST_MEM), 0, 3),
+                                      ("Swap %d%%" % sw_cur, 110, 2)])
+                elif nm == "kindle":  # 电池黑实线 + 内存灰细线（存储移至 Disk 卡对比）
+                    kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
+                    png = render_curves_png(
+                        [(HIST_KB, 0, 3), (HIST_KM, 110, 2)],
+                        legend_items=[("电池 %s%%" % kp[0], 0, 3),
+                                      ("内存 %s%%" % kp[2], 110, 2)])
+                elif nm == "temp":    # CPU 黑实线 + NAND 灰线 + 电池浅灰线（°C 同量纲）
+                    _ct = [v for v in HIST_TEMP if v is not None]
+                    _nn = [v for v in HIST_TN if v is not None]
+                    _bt = [v for v in HIST_TB if v is not None]
+                    png = render_curves_png(
+                        [(HIST_TEMP, 0, 4), (HIST_TN, 110, 3), (HIST_TB, 170, 2)],
+                        h=80, font_size=30,
+                        legend_items=[
+                            ("CPU %s°C" % (("%.0f" % _ct[-1]) if _ct else "--"), 0, 4),
+                            ("NAND %s°C" % (("%.0f" % _nn[-1]) if _nn else "--"), 110, 3),
+                            ("电池 %s°C" % (("%.0f" % _bt[-1]) if _bt else "--"), 170, 2),
+                        ])
+                elif nm == "diskio":  # 磁盘读黑实线 + 写灰线
+                    png = render_curves_png(
+                        [(HIST_IOR, 0, 4), (HIST_IOW, 110, 3)],
+                        h=120, font_size=40,
+                        legend_items=[("读 %.1f MB/s" % _hlast(HIST_IOR), 0, 4),
+                                      ("写 %.1f MB/s" % _hlast(HIST_IOW), 110, 3)])
+                elif nm == "netio":   # 网络下行黑实线 + 上行灰线
+                    png = render_curves_png(
+                        [(HIST_ND, 0, 4), (HIST_NU, 110, 3)],
+                        h=120, font_size=40,
+                        legend_items=[("↓ %.0f KB/s" % _hlast(HIST_ND), 0, 4),
+                                      ("↑ %.0f KB/s" % _hlast(HIST_NU), 110, 3)])
+                elif nm == "diskread":   # 磁盘读：独立上图
+                    png = render_curves_png(
+                        [(HIST_IOR, 0, 5)], h=48, font_size=24, compact=True,
+                        legend_items=[("读 %.1f MB/s" % _hlast(HIST_IOR), 0, 5)])
+                elif nm == "diskwrite":  # 磁盘写：独立下图
+                    png = render_curves_png(
+                        [(HIST_IOW, 110, 5)], h=48, font_size=24, compact=True,
+                        legend_items=[("写 %.1f MB/s" % _hlast(HIST_IOW), 110, 5)])
+                elif nm == "netdown":    # 网络下行：独立上图
+                    png = render_curves_png(
+                        [(HIST_ND, 0, 5)], h=48, font_size=24, compact=True,
+                        legend_items=[("↓ %.0f KB/s" % _hlast(HIST_ND), 0, 5)])
+                elif nm == "netup":      # 网络上行：独立下图
+                    png = render_curves_png(
+                        [(HIST_NU, 110, 5)], h=48, font_size=24, compact=True,
+                        legend_items=[("↑ %.0f KB/s" % _hlast(HIST_NU), 110, 5)])
+                elif nm == "dgxutil":    # DGX GPU 利用率：黑粗实线（与 CPU 同色）
+                    png = render_curves_png(
+                        [(HIST_DGXU, 0, 5)], h=40, font_size=22, compact=True, y_max=100,
+                        legend_items=[("GPU %s%%" % _dgx_val(HIST_DGXU, "%d"), 0, 5)])
+                elif nm == "dgxtemp":    # DGX GPU 温度：灰细虚线（与 NAND 同色）
+                    png = render_curves_png(
+                        [(HIST_DGXT, 110, 2)], h=40, font_size=22, compact=True, y_max=120,
+                        legend_items=[("温度 %s°C" % _dgx_val(HIST_DGXT, "%d"), 110, 2)])
+                else:                 # disk 黑实线 + Kindle 存储灰细线（两端存储对比）
+                    kp = (KINDLE_K[0].split(";") + ["--"] * 5)[:5]
+                    png = render_curves_png(
+                        [(HIST_DISK, 0, 3), (HIST_KD, 110, 2)],
+                        legend_items=[("磁盘 %d%%" % _hmax2(HIST_DISK), 0, 3),
+                                      ("K存储 %s%%" % kp[3], 110, 2)])
+                _PNG_CACHE[_cache_key] = (_now, png)
             self._send_bytes(200, png, "image/png")
             return
         if p.startswith("/probe.js"):
@@ -1042,6 +1541,17 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/history"):
             html = render_history()
             self._send(200, html, "text/html; charset=utf-8")
+            return
+        if p.startswith("/lan.txt"):
+            self._send(200, mac_lan_ip() + "\n", "text/plain; charset=utf-8")
+            return
+        if p.startswith("/vp"):
+            try:
+                with open("/tmp/panel-vp.log", "a") as f:
+                    f.write(self.path + "\n")
+            except Exception:
+                pass
+            self._send_bytes(200, b"", "text/plain")
             return
         if p.startswith("/panel.html"):
             try:

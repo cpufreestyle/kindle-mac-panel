@@ -8,6 +8,11 @@ Mac 状态实时显示在 Kindle Paperwhite 4 上：应用面板 + 睡眠屏保�
 
 ## 快速开始
 
+> **qstats 联动**：qstats 运行时每 5s 写 `/tmp/qstats-metrics.json`，
+> `server.py` 优先读取这份快照（CPU/GPU/内存/磁盘/网速/传感器），
+> 面板标题显示 `QSTATS`；qstats 未运行或数据超过 15s 时自动回退到本机
+> psutil + SMC 采集。
+
 ```bash
 # 1. 安装 LaunchAgent（符号链接到 ~/Library/LaunchAgents/）
 for f in launchagents/com.kindle.*.plist; do
@@ -36,9 +41,10 @@ python3 check.py
   /panel.html       应用面板（建议引擎 + 防抖）
   /screensaver.png  屏保仪表图 1072×1448（Pillow + STHeiti）
       ↓ 15s
-传输  USB RNDIS（Mac 192.168.15.201 持久化 / Kindle 192.168.15.244）
+传输  USB RNDIS（Mac 192.168.15.201 / Kindle 192.168.15.244，优先）
+      或 Wi-Fi（Mac 192.168.1.136 / Kindle 192.168.1.169，无线）
       ↓
-呈现  Kindle fetchloop.sh（常驻，15s）
+呈现  Kindle fetchloop.sh（常驻，8s；每约 2 分钟全屏清残影）
   ├ 拉面板 → /var/local/mesquite/com.kindle.macpanel/index.html
   ├ 拉屏保图 → md5 变化才 mntroot rw 写 /usr/share/blanket/screensaver/bg_ss00.png
   └ 失败 → OFFLINE 提示页（恢复自动回面板）
@@ -67,6 +73,33 @@ python3 check.py
 - 心跳：fetchloop 每次拉取即心跳，超 5 分钟 Mac 弹"Kindle 失联"
 - 屏保仪表：fetchloop v5 双拉取（面板+屏保图），md5 变化才写 rootfs；
   24h 折线数据来自 alert.sh 落盘的 history.json
+
+## 无线联机（2026-11-15 实测）
+
+- Kindle 已在 Wi-Fi `506 2.4` 上，地址 `192.168.1.169`；Mac en0 当前
+  `192.168.1.136`。设备侧已实测可 `curl http://192.168.1.136:18866/panel.html`。
+- `fetchloop.sh` v11：USB 在线时优先 USB，并通过
+  `http://192.168.15.201:18866/lan.txt` 把 Mac 当前 LAN IP 缓存到
+  `/mnt/us/usbnet/mac-ip.txt`；拔掉 USB 后自动改用 Wi-Fi。
+- Kindle 不支持 `.local` 或路由器主机名解析（`dvpack.local` / `dvpack` 均失败），
+  所以无线依赖缓存 IP。Mac 的 DHCP 地址变化时，最稳的是在路由器给 Mac 做静态租约。
+- Wi-Fi 下耗电和延迟都高于 USB；长期常显仍建议插 USB。
+
+## 面板显示（2026-11-16）
+
+- CPU/GPU 合并曲线；RAM = **构成条**（App 黑 / Wired 深灰 / Compressed 浅灰 /
+  Free 白）+ **Compressed / Swap 折线**合图 + 压力数字。总占用率长期平直，
+  所以折线只画真正会变化的压缩内存和 Swap。
+- 独立 **TEMP** 卡：CPU / NAND / 电池三线温度图（0–120°C 同量纲），
+  下方保留风扇、功耗和 Kindle 状态。
+- 所有多线图图例统一为「色块 + 线样 + 名称」：CPU 黑 / GPU 灰，
+  Comp 黑 / Swap 灰，磁盘读黑 / 写灰，网络下行黑 / 上行灰，
+  温度 CPU 黑 / NAND 深灰 / 电池浅灰；内存构成条为
+  App 黑 / Wired 深灰 / Comp 浅灰 / Free 白（黑框）。
+- DISK 上下两张独立曲线：读 / 写；NET 上下两张独立曲线：下行 / 上行，
+  与 Stats 弹窗的读数方式一致。
+- 字号整体放大；CPU 卡直接显示 Mac CPU 温度，STATUS 保留 Kindle 电池/温度/
+  风扇/功耗等信息。
 
 ## 常用命令
 

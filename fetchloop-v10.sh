@@ -1,5 +1,5 @@
 #!/bin/sh
-# fetchloop v10（v9 + documents 双目录同步）：USB IP 优先，Wi-Fi IP 兜底
+# fetchloop v11（v10 + LAN 自发现）：USB 查询 Mac 当前 en0 IP，Wi-Fi 优先，静态 IP 兜底
 # 双目录同步：mesquite 有两条加载路径（app 目录 / documents 目录），
 # KUAL/框架重启可能走 documents——不同步会显示 Nov 1 的 v1 古董页（2026-11-14 实测）
 D=/var/local/mesquite/com.kindle.macpanel
@@ -13,31 +13,65 @@ while true; do
   DU=$(df -k /mnt/us | tail -1 | awk '{printf "%d",$3*100/$2}')
   CS=$(cat /sys/class/power_supply/bd71827_ac/online 2>/dev/null | head -1)
   K="k=${B:-na};${T:-na};${MU:-na};${DU:-na};${CS:-0}"
+  CACHE=/mnt/us/usbnet/mac-ip.txt
+  LAN=$(curl -s --max-time 1 http://192.168.15.201:18866/lan.txt)
+  [ -n "$LAN" ] && echo "$LAN" > $CACHE
+  [ -z "$LAN" ] && LAN=$(cat $CACHE 2>/dev/null)
+  if ifconfig usb0 2>/dev/null | grep -q "RUNNING"; then
+    TARGETS="192.168.15.201 $LAN 192.168.1.136 192.168.1.191 192.168.1.112"
+  else
+    TARGETS="$LAN 192.168.1.136 192.168.1.191 192.168.1.112 192.168.15.201"
+  fi
   OK=""
-  for TGT in 192.168.15.201 192.168.1.112 192.168.1.191; do
-    curl -s --max-time 6 "http://$TGT:18866/panel.html?$K" -o $P
-    if [ -s $P ] && grep -q DOCTYPE $P; then OK=$TGT; break; fi
+  for TGT in $TARGETS; do
+    if curl -sf --max-time 6 "http://$TGT:18866/panel.html?$K" -o $P.new \
+       && [ -s $P.new ] && grep -q DOCTYPE $P.new; then
+      mv -f $P.new $P
+      OK=$TGT
+      break
+    fi
   done
   if [ -n "$OK" ]; then
-    cp $P $D/index.html 2>/dev/null
-    cp $P $DOC/index.html 2>/dev/null
-    curl -s --max-time 6 "http://$OK:18866/spark.json" -o $D/spark.json
-    cp $D/spark.json $DOC/spark.json 2>/dev/null
-    for C in cpu mem swap disk net kindle temp; do
-      curl -s --max-time 6 "http://$OK:18866/sparkpng/$C.png" -o $D/spark$C.png
-      cp $D/spark$C.png $DOC/spark$C.png 2>/dev/null
-      cp $D/spark$C.png $D/spark${C}_a.png
-      cp $D/spark$C.png $D/spark${C}_b.png
+    cp $P $D/index.html
+    cp $P $DOC/index.html
+    if curl -sf --max-time 6 "http://$OK:18866/spark.json" -o $D/spark.json.new \
+       && [ -s $D/spark.json.new ]; then
+      mv -f $D/spark.json.new $D/spark.json
+      cp $D/spark.json $DOC/spark.json
+    fi
+    for C in cpu membar memtrend diskread diskwrite netdown netup dgxutil dgxtemp; do
+      if curl -sf --max-time 6 "http://$OK:18866/sparkpng/$C.png" -o $D/spark$C.new \
+         && [ -s $D/spark$C.new ]; then
+        mv -f $D/spark$C.new $D/spark$C.png
+        cp $D/spark$C.png $DOC/spark$C.png
+        cp $D/spark$C.png $D/spark${C}_a.png
+        cp $D/spark$C.png $D/spark${C}_b.png
+        cp $D/spark${C}_a.png $DOC/spark${C}_a.png
+        cp $D/spark${C}_b.png $DOC/spark${C}_b.png
+      fi
     done
-    curl -s --max-time 6 "http://$OK:18866/script.js" -o $D/script.js
-    cp $D/script.js $DOC/script.js 2>/dev/null
-    curl -s --max-time 6 "http://$OK:18866/probe.js" -o $D/probe.js
-    cp $D/probe.js $DOC/probe.js 2>/dev/null
+    for F in script.js probe.js; do
+      if curl -sf --max-time 6 "http://$OK:18866/$F" -o $D/$F.new \
+         && [ -s $D/$F.new ]; then
+        mv -f $D/$F.new $D/$F
+        cp $D/$F $DOC/$F
+      fi
+    done
     touch $D/invalidatedTimeStamp
-    curl -s --max-time 10 "http://$OK:18866/screensaver.png" -o /mnt/us/usbnet/ss.png
-    for R in cpu gpu ram disk; do
-      curl -s --max-time 6 "http://$OK:18866/ring/$R.png" -o $D/ring_$R.png
-    done
+    if [ $((N % 4)) -eq 0 ]; then
+      if curl -sf --max-time 10 "http://$OK:18866/screensaver.png" -o /mnt/us/usbnet/ss.new \
+         && [ -s /mnt/us/usbnet/ss.new ]; then
+        mv -f /mnt/us/usbnet/ss.new /mnt/us/usbnet/ss.png
+      fi
+    fi
+    if [ $((N % 4)) -eq 0 ]; then
+      for R in cpu gpu ram disk; do
+        if curl -sf --max-time 6 "http://$OK:18866/ring/$R.png" -o $D/ring_$R.new \
+           && [ -s $D/ring_$R.new ]; then
+          mv -f $D/ring_$R.new $D/ring_$R.png
+        fi
+      done
+    fi
   else
     echo "$(date +%m-%d\ %H:%M) all-ip-fail" >> /mnt/us/usbnet/fetchlog
     tail -50 /mnt/us/usbnet/fetchlog > /tmp/fl.tmp && mv /tmp/fl.tmp /mnt/us/usbnet/fetchlog
@@ -50,10 +84,10 @@ while true; do
     cp /mnt/us/usbnet/ss.png /usr/share/blanket/screensaver/bg_ss00.png && sync
     mntroot ro 2>/dev/null
   fi
-  # 周期全刷：清 e-ink 局部刷新累积的残影（每 20 轮 ≈ 60s）
+# 周期全刷：8 秒一轮时，每 15 轮约 2 分钟清一次残影
   N=$((N+1))
-  if [ $((N % 20)) -eq 0 ]; then
+  if [ $((N % 15)) -eq 0 ]; then
     eips -s w=1088,h=1536 -f 2>/dev/null
   fi
-  sleep 3
+  sleep 8
 done

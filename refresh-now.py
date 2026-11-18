@@ -13,7 +13,7 @@ FETCH_CMD = (
     'MU=$(awk \'/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "%d",(t-a)*100/t}\' '
     '/proc/meminfo 2>/dev/null); '
     'DU=$(df -k /mnt/us | tail -1 | awk \'{printf "%d",$3*100/$2}\'); '
-    'curl -s --max-time 8 "http://192.168.1.191:18866/panel.html?'
+    'curl -s --max-time 8 "http://192.168.15.201:18866/panel.html?'
     'k=${B:-na};${T:-na};${MU:-na};${DU:-na}" -o ' + D + '/index.new '
     '&& mv -f ' + D + '/index.new ' + D + '/index.html && echo FETCH_OK'
 )

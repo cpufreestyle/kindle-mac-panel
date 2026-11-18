@@ -1,5 +1,6 @@
 #!/bin/sh
-# fetchloop v11（v10 + LAN 自发现）：USB 查询 Mac 当前 en0 IP，Wi-Fi 优先，静态 IP 兜底
+# fetchloop v12（v11 + 多网段自发现）：Mac 的 en0 IP 随网络切换（192.168.1.x / 192.168.15.x），
+# 写死单个 LAN 探针会在换网后失联，改为依次探测多个候选地址并回写缓存。
 # 双目录同步：mesquite 有两条加载路径（app 目录 / documents 目录），
 # KUAL/框架重启可能走 documents——不同步会显示 Nov 1 的 v1 古董页（2026-11-14 实测）
 D=/var/local/mesquite/com.kindle.macpanel
@@ -14,8 +15,16 @@ while true; do
   CS=$(cat /sys/class/power_supply/bd71827_ac/online 2>/dev/null | head -1)
   K="k=${B:-na};${T:-na};${MU:-na};${DU:-na};${CS:-0}"
   CACHE=/mnt/us/usbnet/mac-ip.txt
-  LAN=$(curl -s --max-time 1 http://192.168.15.201:18866/lan.txt)
-  [ -n "$LAN" ] && echo "$LAN" > $CACHE
+  PROBES="192.168.15.201 192.168.1.136 192.168.1.191 192.168.1.112 192.168.1.224 $(cat $CACHE 2>/dev/null)"
+  LAN=""
+  for PB in $PROBES; do
+    R=$(curl -s --max-time 1 "http://$PB:18866/lan.txt")
+    if [ -n "$R" ]; then
+      LAN=$R
+      echo "$R" > $CACHE
+      break
+    fi
+  done
   [ -z "$LAN" ] && LAN=$(cat $CACHE 2>/dev/null)
   if ifconfig usb0 2>/dev/null | grep -q "RUNNING"; then
     TARGETS="192.168.15.201 $LAN 192.168.1.136 192.168.1.191 192.168.1.112"

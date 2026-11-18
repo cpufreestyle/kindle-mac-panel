@@ -8,9 +8,14 @@ FLAG=/mnt/us/usbnet/ENABLED
 # --- 防垃圾再生（core_pattern 用有效管道丢弃，弹窗不再触发）---
 echo '|/bin/true' > /proc/sys/kernel/core_pattern 2>/dev/null
 rm -f /mnt/us/cvm_* /mnt/us/mesquite_* /mnt/us/Indexer_Dump_* 2>/dev/null
+# v3.4: 崩溃归档落在 documents/（.sdr 是目录须 rm -rf），cvm/mesquite 两种前缀都要扫
+rm -rf /mnt/us/documents/cvm_*_crash_* /mnt/us/documents/mesquite_*_crash_* 2>/dev/null
 
 # --- 面板数据链路保活：主 fetchloop 不在则拉起（2026-11-14 实测 boot 后会丢）---
 pgrep -f usbnet/fetchloop.sh >/dev/null 2>&1 || (nohup /mnt/us/usbnet/fetchloop.sh >/dev/null 2>&1 &)
+
+# --- chargeloop 保活：用精确路径匹配防自匹配（pgrep -f 会命中 cron 自己的命令行）---
+pgrep -f '/mnt/us/usbnet/chargeloop.sh$' >/dev/null 2>&1 || (nohup /mnt/us/usbnet/chargeloop.sh >/dev/null 2>&1 &)
 
 # --- demd 保活死亡：弹窗宿主服务，运行时停用（boot 依赖已实测无碍，禁改名 upstart conf）---
 initctl stop demd >/dev/null 2>&1

@@ -782,7 +782,7 @@ def _start_sampler():
     threading.Thread(target=loop, daemon=True).start()
 
 
-def win_push(payload):
+def win_push(payload, peer="?"):
     """接收 Windows 采集器推送的 JSON 快照。字段缺失或类型不对一律丢弃。"""
     if not isinstance(payload, dict):
         return False
@@ -798,6 +798,7 @@ def win_push(payload):
         if v is not None:
             out[k] = v
     if "cpu" not in out:
+        _winlog("REJECT from=%s host=%r keys=%r（缺 cpu）" % (peer, out.get("host"), sorted(payload.keys())))
         return False
     out["ts"] = time.time()
     with _WIN_LOCK:
@@ -811,7 +812,19 @@ def win_push(payload):
         if len(arr) > 240:
             arr.pop(0)
     _hsave()
+    _winlog("OK from=%s host=%r cpu=%s mem=%s%% disk=%s%% down=%s up=%s" % (
+        peer, out.get("host"), out.get("cpu"), out.get("memPct"), out.get("diskPct"),
+        out.get("netDownKBs"), out.get("netUpKBs")))
     return True
+
+
+def _winlog(msg):
+    """推送日志（排查「离线」用）：/tmp/kindle-win.log"""
+    try:
+        with open("/tmp/kindle-win.log", "a") as f:
+            f.write(time.strftime("%H:%M:%S ") + msg + "\n")
+    except OSError:
+        pass
 
 
 def win_snapshot():
@@ -1593,17 +1606,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         # Windows 主机指标推送（win-metrics.ps1 → POST JSON）
         if self.path.startswith("/api/push/win"):
+            peer = self.client_address[0] if self.client_address else "?"
             try:
                 ln = int(self.headers.get("Content-Length", 0))
                 if ln <= 0 or ln > 64 * 1024:
+                    _winlog("REJECT from=%s len=%s（长度非法）" % (peer, ln))
                     self._send(400, b"BADLEN", "text/plain")
                     return
-                payload = json.loads(self.rfile.read(ln).decode("utf-8", "replace"))
-                if win_push(payload):
+                raw = self.rfile.read(ln)
+                try:
+                    payload = json.loads(raw.decode("utf-8", "replace"))
+                except Exception:
+                    _winlog("REJECT from=%s（JSON 解析失败）body=%r"
+                            % (peer, raw[:120]))
+                    self._send(400, b"BADJSON", "text/plain")
+                    return
+                if win_push(payload, peer):
                     self._send_bytes(200, b"OK", "text/plain")
                 else:
+                    _winlog("REJECT from=%s（字段不合法）body=%r" % (peer, raw[:200]))
                     self._send(400, b"BADDATA", "text/plain")
             except Exception:
+                _winlog("REJECT from=%s（处理异常）" % peer)
                 self._send(400, b"BADJSON", "text/plain")
             return
         self._send(404, b"NF", "text/plain")

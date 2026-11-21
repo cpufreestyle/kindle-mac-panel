@@ -16,17 +16,60 @@
 #>
 [CmdletBinding()]
 param(
-    # 接收端（Mac 的局域网 IP）
-    [string]$MacIp = '192.168.1.112',
+    # 接收端（Mac 的局域网 IP）。留空则自动发现（Mac 换网段时不会失联）
+    [string]$MacIp = '',
     [int]$Port = 18866,
     # 采集间隔（秒）
     [int]$IntervalSec = 5,
     # 只采一次就退出（调试用）
-    [switch]$Once
+    [switch]$Once,
+    # 只做诊断：探测 Mac、跑一次采集、报告每项结果，不循环
+    [switch]$Check
 )
 
 $ErrorActionPreference = 'Stop'
-$endpoint = "http://${MacIp}:${Port}/api/push/win"
+
+# Mac 候选地址（Mac 的 en0 IP 随网络在 192.168.1.x / 192.168.15.x 之间切换，
+# 写死单个 IP 会在换网后失联 —— 与 kindle-panel/fetchloop-v10.sh 同样的坑）
+$MacCandidates = @(
+    '192.168.1.112', '192.168.15.201', '192.168.1.136', '192.168.1.191',
+    '192.168.1.224', '192.168.15.244'
+)
+$CacheFile = "$env:LOCALAPPDATA\win-metrics\mac-ip.txt"
+$endpoint = ''
+
+function Resolve-MacEndpoint {
+    # 返回可达的 endpoint；探测顺序：显式 -MacIp → 缓存 → 候选列表
+    $cands = @()
+    if ($MacIp) { $cands += $MacIp }
+    try {
+        if (Test-Path $CacheFile) {
+            $cached = (Get-Content $CacheFile -ErrorAction Stop | Select-Object -First 1)
+            if ($cached) { $cands += $cached.Trim() }
+        }
+    } catch { }
+    $cands += $MacCandidates
+
+    $seen = @{}
+    foreach ($c in $cands) {
+        if (-not $c -or $seen.ContainsKey($c)) { continue }
+        $seen[$c] = $true
+        $ep = "http://${c}:${Port}/api/push/win"
+        try {
+            # 用 /lan.txt 探活（Mac 侧必定返回本机 IP）
+            $r = Invoke-WebRequest -Uri "http://${c}:${Port}/lan.txt" -TimeoutSec 2 -UseBasicParsing
+            if ($r.StatusCode -eq 200 -and $r.Content) {
+                try {
+                    $dir = Split-Path $CacheFile -Parent
+                    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+                    Set-Content -Path $CacheFile -Value $c
+                } catch { }
+                return @{ endpoint = $ep; ip = $c }
+            }
+        } catch { }
+    }
+    return $null
+}
 
 # ── 采集工具函数 ────────────────────────────────────────────────────────────
 
@@ -111,7 +154,50 @@ function Get-UptimeSeconds {
 $prevBytes = $null
 $prevTime = $null
 
+# 解析接收端（-MacIp 给死就用它，否则自动发现）
+$mac = Resolve-MacEndpoint
+if (-not $mac) {
+    Write-Host "win-metrics: 找不到可达的 Mac（候选: $($MacCandidates -join ', ')）"
+    Write-Host "win-metrics: 用 -MacIp <Mac的IP> 显式指定，或确认 Mac 上 server.py 在跑"
+    if ($Check) { exit 2 }
+    exit 1
+}
+$endpoint = $mac.endpoint
 Write-Host "win-metrics: 推送到 $endpoint（每 ${IntervalSec}s，Ctrl+C 退出）"
+
+if ($Check) {
+    # 诊断模式：把每项采集结果和推送结果都打出来，方便贴回来定位
+    Write-Host "---- 诊断 ----"
+    Write-Host ("主机名     : " + $env:COMPUTERNAME)
+    Write-Host ("接收端     : " + $endpoint)
+    Write-Host ("CPU        : " + (Get-CpuUsagePercent))
+    $m = Get-MemInfo
+    Write-Host ("内存       : total=$($m.totalGB)G used=$($m.usedGB)G pct=$($m.pct)")
+    $d = Get-DiskInfo
+    Write-Host ("磁盘       : total=$($d.totalGB)G used=$($d.usedGB)G free=$($d.freeGB)G pct=$($d.pct)")
+    Write-Host ("温度       : " + (Get-CpuTempC))
+    Write-Host ("运行时长   : " + (Get-UptimeSeconds))
+    $payload = @{
+        host = $env:COMPUTERNAME; cpu = (Get-CpuUsagePercent)
+        memPct = $m.pct; memUsedGB = $m.usedGB; memTotalGB = $m.totalGB
+        diskPct = $d.pct; diskUsedGB = $d.usedGB; diskTotalGB = $d.totalGB
+        diskFreeGB = $d.freeGB; tempC = (Get-CpuTempC)
+        uptimeSec = (Get-UptimeSeconds)
+    }
+    $clean = [ordered]@{}
+    foreach ($k in $payload.Keys) { if ($null -ne $payload[$k]) { $clean[$k] = $payload[$k] } }
+    $body = ConvertTo-Json -InputObject $clean -Compress -Depth 3
+    Write-Host ("推送内容   : " + $body)
+    try {
+        $resp = Invoke-WebRequest -Uri $endpoint -Method Post -Body $body `
+            -ContentType 'application/json' -TimeoutSec 5 -UseBasicParsing
+        Write-Host ("推送结果   : HTTP " + $resp.StatusCode + " " + $resp.Content)
+    } catch {
+        Write-Host ("推送结果   : 失败 " + $_.Exception.Message)
+        exit 3
+    }
+    exit 0
+}
 
 while ($true) {
     $now = Get-Date
@@ -191,6 +277,14 @@ while ($true) {
     } catch {
         Write-Host "win-metrics: 推送失败 $($_.Exception.Message)"
         if ($Once) { Write-Host "win-metrics: 本次采集 $body" }
+        # 连不上就重新发现 Mac（Mac 换网段/IP 漂移时自愈）
+        if (-not $Once) {
+            $m2 = Resolve-MacEndpoint
+            if ($m2 -and $m2.endpoint -ne $endpoint) {
+                $endpoint = $m2.endpoint
+                Write-Host "win-metrics: 已切换到 $endpoint"
+            }
+        }
     }
 
     if ($Once) { break }

@@ -3,6 +3,8 @@
 Mac 状态实时显示在 Kindle Paperwhite 4 上：应用面板 + 睡眠屏保双呈现，
 监控 → 解读 → 建议 → 推送四层闭环，全链路自愈。
 
+面板标题：**运维值班台**（可显示局域网内 Windows 主机的指标，见「Windows 主机接入」）。
+
 > **前提**：Kindle 已越狱并部署 WAF 应用框架（mesquite）+ USBNet watchdog。
 > 采集/渲染/告警全自动，日常零维护。
 
@@ -12,6 +14,15 @@ Mac 状态实时显示在 Kindle Paperwhite 4 上：应用面板 + 睡眠屏保�
 > `server.py` 优先读取这份快照（CPU/GPU/内存/磁盘/网速/传感器），
 > 面板标题显示 `QSTATS`；qstats 未运行或数据超过 15s 时自动回退到本机
 > psutil + SMC 采集。
+
+> **内存口径**：本机模式（qstats 未运行）下 psutil 不提供 compressed，
+> 且 `vm.used` 的分母口径与 qstats 不同。`server.py` 改用 `vm_stat` 按
+> qstats 同口径推导四段（App / Wired / Comp / Free），保证两项加起来 = 总内存：
+> ```
+> free = free_pages + speculative + file_backed(cache)
+> used = total - free
+> app  = used - wired - compressed
+> ```
 
 ```bash
 # 1. 安装 LaunchAgent（符号链接到 ~/Library/LaunchAgents/）
@@ -100,6 +111,21 @@ python3 check.py
   与 Stats 弹窗的读数方式一致。
 - 字号整体放大；CPU 卡直接显示 Mac CPU 温度，STATUS 保留 Kindle 电池/温度/
   风扇/功耗等信息。
+
+## Windows 主机接入（WIN 卡）
+
+局域网内的 Windows 机器（当前：**NUC9 = 192.168.1.68**，Windows 10/11，
+Jellyfin + dvpack 宿主）通过 `win-metrics.ps1` 每 5s 把 JSON 推到 Mac 的
+`POST /api/push/win`，Mac 端缓存快照并渲染 **WIN 卡**（CPU/内存/磁盘 +
+CPU/内存曲线 + 网速上下行曲线），与本机指标同屏。
+
+选「Windows 主动推」而不是「Mac 去拉」的原因：NUC9 的 SSH(22) 要密码、
+SMB(445) 要认证、WinRM(5985) 没开，Mac 侧都拉不动；反向推送只需 NUC9 能
+出站访问 Mac 的 18866（已实测可达）。
+
+- 30s 收不到数据 → 面板显示「WIN · 离线」；从未收到过 → 面板不显示该卡。
+- 采集脚本：`win-metrics.ps1`（PowerShell 7）
+- 部署手册（拷脚本、装计划任务、防火墙、排障）：**`docs/WINDOWS-INTEGRATION.md`**
 
 ## 常用命令
 

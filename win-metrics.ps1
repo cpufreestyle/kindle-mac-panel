@@ -50,24 +50,27 @@ function Get-CpuUsagePercent {
 }
 
 function Get-MemInfo {
-    $os = Get-CimInstance Win32_OperatingSystem
-    $total = [double]$os.TotalVisibleMemorySize * 1KB
-    $free = [double]$os.FreePhysicalMemory * 1KB
-    $used = $total - $free
-    return @{
-        usedGB  = [math]::Round($used / 1GB, 2)
-        totalGB = [math]::Round($total / 1GB, 2)
-        pct     = if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null }
-    }
+    # 必须自带 try/catch：脚本设了 $ErrorActionPreference='Stop'，
+    # 裸的 Get-CimInstance 失败会直接终止整个采集循环。
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $total = [double]$os.TotalVisibleMemorySize * 1KB
+        $free = [double]$os.FreePhysicalMemory * 1KB
+        $used = $total - $free
+        return @{
+            usedGB  = [math]::Round($used / 1GB, 2)
+            totalGB = [math]::Round($total / 1GB, 2)
+            pct     = if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null }
+        }
+    } catch { return @{} }
 }
 
 function Get-DiskInfo {
     # 系统盘（通常是 C:）
     $sysDrive = $env:SystemDrive
     if (-not $sysDrive) { $sysDrive = 'C:' }
-    $root = "$sysDrive\"
     try {
-        $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$sysDrive'"
+        $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$sysDrive'" -ErrorAction Stop
         $total = [double]$d.Size
         $free = [double]$d.FreeSpace
         $used = $total - $free
@@ -77,7 +80,7 @@ function Get-DiskInfo {
             freeGB  = [math]::Round($free / 1GB, 2)
             pct     = if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null }
         }
-    } catch { return $null }
+    } catch { return @{} }
 }
 
 function Get-CpuTempC {

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # 分块 base64 推送本地脚本到设备（默认 watchdog，可传参：push-watchdog.py <本地> <远程>）
 import base64
+import os
 import socket
 import sys
 import time
 
 HOST = ('192.168.15.244', 23)
-LOCAL = sys.argv[1] if len(sys.argv) > 1 else '/Users/a1-6/kindle-panel/watchdog-v33.sh'
+# 默认推送同目录下的 watchdog-v33.sh —— 用脚本自身位置推导，目录搬家后不用改
+_BASE = os.path.dirname(os.path.abspath(__file__))
+LOCAL = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_BASE, 'watchdog-v33.sh')
 REMOTE = sys.argv[2] if len(sys.argv) > 2 else '/mnt/us/usbnet/watchdog.sh'
 
 

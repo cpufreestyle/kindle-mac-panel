@@ -54,8 +54,9 @@ HIST_WNETU = []    # Windows 上行 KB/s
 # 允许局域网下载的 Windows 侧脚本（白名单）
 WIN_FILES = ("win-metrics.ps1", "install-win-metrics.ps1")
 
-# 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
-HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
+# 历史持久化文件（与 BASE 同目录 —— 2026-11-22 项目迁到 AI Shared/repo/ 后，
+# 原先写死的绝对路径会指到旧位置；用 BASE 推导才能跟着目录走）
+HIST_FILE = os.path.join(BASE, "hists.json")
 QSTATS_FILE = os.environ.get("QSTATS_METRICS", "/tmp/qstats-metrics.json")
 QSTATS_TTL = 15.0
 

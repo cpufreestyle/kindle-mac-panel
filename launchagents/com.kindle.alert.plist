@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/a1-6/kindle-panel/alert.sh</string>
+        <string>/Users/a1-6/AI Shared/repo/kindle-panel/alert.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

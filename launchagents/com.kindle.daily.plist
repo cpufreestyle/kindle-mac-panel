@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/a1-6/kindle-panel/daily-summary.sh</string>
+        <string>/Users/a1-6/AI Shared/repo/kindle-panel/daily-summary.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

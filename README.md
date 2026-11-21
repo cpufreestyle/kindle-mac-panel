@@ -10,6 +10,11 @@ Mac 状态实时显示在 Kindle Paperwhite 4 上：应用面板 + 睡眠屏保�
 
 ## 快速开始
 
+> **仓库位置**：`/Users/a1-6/AI Shared/repo/kindle-panel`
+> （2026-11-22 从 `~/kindle-panel` 迁来。旧路径保留符号链接 → 新目录，
+> 所以历史命令、launchd 配置、外部引用都还能用旧路径打开，不用改。）
+> 目录名带空格，命令行里要加引号：`cd "/Users/a1-6/AI Shared/repo/kindle-panel"`
+
 > **qstats 联动**：qstats 运行时每 5s 写 `/tmp/qstats-metrics.json`，
 > `server.py` 优先读取这份快照（CPU/GPU/内存/磁盘/网速/传感器），
 > 面板标题显示 `QSTATS`；qstats 未运行或数据超过 15s 时自动回退到本机

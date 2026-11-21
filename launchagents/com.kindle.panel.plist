@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/a1-6/kindle-panel/server.py</string>
+        <string>/Users/a1-6/AI Shared/repo/kindle-panel/server.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

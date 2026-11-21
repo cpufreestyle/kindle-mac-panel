@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # 布局方案对比测试页：一次截图筛出 mesquite 支持的行布局写法
+import os
 import sys
 
-sys.path.insert(0, '/Users/a1-6/kindle-panel')
+# 同目录 —— 用脚本自身位置推导，目录搬家后不用改
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import socket
 import time
 

@@ -19,31 +19,49 @@ MASK=255.255.255.0
 
 echo "== Kindle USB 接驳 =="
 
-# 1. 记录当前接口集合，等新网卡冒头
+# 1. 找 Kindle 的 USB 网卡。
+#    两条路径：新出现的接口（插线后跑本脚本）；已经在了（先插线后跑本脚本，
+#    这次就踩到过 —— 只比对新接口会误报「没出现」）。
+#    判定：接口有 192.168.15.201 → 就是它；否则找没有 IPv4 的 en* 逐个试配。
 BEFORE=$(ifconfig -l | tr ' ' '\n' | grep -E '^(en|usb)' | sort | tr '\n' ' ')
 echo "现有接口: $BEFORE"
 
-echo "等待新 USB 网卡（最多 ${WAIT}s）..."
-NEW=""
-i=0
-while [ $i -lt "$WAIT" ]; do
-    AFTER=$(ifconfig -l | tr ' ' '\n' | grep -E '^(en|usb)' | sort | tr '\n' ' ')
-    NEW=""
-    for x in $AFTER; do
-        # 出现在 BEFORE 里的是老接口（en0 WiFi / bridge0 / awdl 等），跳过
-        if ! echo " $BEFORE " | grep -q " $x "; then
-            NEW="$NEW $x"
-        fi
-    done
-    if [ -n "$NEW" ]; then break; fi
-    i=$((i + 2))
-    sleep 2
+FOUND=""
+# 路径 A：已经配好了
+for x in $(ifconfig -l | tr ' ' '\n' | grep -E '^(en|usb)'); do
+    if ifconfig "$x" 2>/dev/null | grep -q "inet 192\.168\.15\.201 "; then
+        FOUND="$x"; echo "✓ 已找到配好的接口: $x (192.168.15.201)"; break
+    fi
 done
 
-NEW=$(echo $NEW)   # 去掉首尾空格
+# 路径 B：等新接口，或在现有接口里找没 IP 的
+if [ -z "$FOUND" ]; then
+    echo "等待 Kindle USB 网卡（最多 ${WAIT}s）..."
+    i=0
+    while [ $i -lt "$WAIT" ]; do
+        AFTER=$(ifconfig -l | tr ' ' '\n' | grep -E '^(en|usb)' | sort | tr '\n' ' ')
+        # B1：新出现的接口
+        for x in $AFTER; do
+            if ! echo " $BEFORE " | grep -q " $x "; then
+                FOUND="$x"; break
+            fi
+        done
+        # B2：现有接口里没配 IPv4 的（en0 有 WiFi IP 会跳过）
+        if [ -z "$FOUND" ]; then
+            for x in $AFTER; do
+                if ! ifconfig "$x" 2>/dev/null | grep -q "inet "; then
+                    FOUND="$x"; break
+                fi
+            done
+        fi
+        if [ -n "$FOUND" ]; then break; fi
+        i=$((i + 2))
+        sleep 2
+    done
+fi
 
-if [ -z "$NEW" ]; then
-    echo "✗ ${WAIT}s 内没有新的 USB 网卡出现"
+if [ -z "$FOUND" ]; then
+    echo "✗ ${WAIT}s 内没找到可用的 USB 网卡"
     echo ""
     echo "  macOS 侧排查："
     echo "    ioreg -p IOUSB -l -w 0 | grep -i 'USB Product Name'   # 看有没有 Amazon/Kindle"
@@ -59,21 +77,18 @@ if [ -z "$NEW" ]; then
     exit 1
 fi
 
-echo "✓ 发现新接口: $NEW"
-
 # 2. 给它配静态 IP
-CFG=""
-for x in $NEW; do
-    if ifconfig "$x" 192.168.15.201 netmask $MASK up 2>/dev/null; then
-        CFG="$x"; break
+if ! ifconfig "$FOUND" 2>/dev/null | grep -q "inet 192\.168\.15\.201 "; then
+    if ifconfig "$FOUND" 192.168.15.201 netmask $MASK up 2>/dev/null; then
+        echo "✓ $FOUND 已配 $TARGET_IP/$MASK"
+    else
+        echo "✗ 给 $FOUND 配 $TARGET_IP 失败"
+        exit 1
     fi
-done
-
-if [ -z "$CFG" ]; then
-    echo "✗ 给 $NEW 配 $TARGET_IP 失败"
-    exit 1
+else
+    echo "✓ $FOUND 已经是 $TARGET_IP"
 fi
-echo "✓ $CFG 已配 $TARGET_IP/$MASK"
+CFG="$FOUND"
 
 # 3. 等 Kindle 侧 telnet 起来
 echo "等 Kindle ($KINDLE_IP) telnet:23 …"

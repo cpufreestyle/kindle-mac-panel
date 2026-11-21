@@ -36,27 +36,73 @@ function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
 Say "==== win-metrics 安装器 ====" 'Cyan'
 
 # ── 0. 平台检查 ─────────────────────────────────────────────────────────────
-if (-not $IsWindows) {
-    Say "✗ 这个安装器只能在 Windows 上跑（当前: $($PSVersionTable.OS)）" 'Red'
+# 用 $env:OS 判断而不是 $IsWindows —— 后者是 PowerShell 6+ 独有的变量，
+# 在 Windows PowerShell 5.1 上是 $null，会误判成「非 Windows」直接退出。
+if ($env:OS -ne 'Windows_NT') {
+    Say "✗ 这个安装器只能在 Windows 上跑（当前: $($env:OS)）" 'Red'
     exit 1
 }
 
 # ── 1. 检查 PowerShell 7 ─────────────────────────────────────────────────────
 $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
-if (-not $pwsh) {
-    Say "✗ 找不到 pwsh（PowerShell 7）" 'Red'
-    Say "  本脚本按 PowerShell 7 写的（用户偏好 PS7）。请先安装：" 'Yellow'
-    Say "  winget install --id Microsoft.PowerShell --source winget" 'Yellow'
-    Say "  或从 https://aka.ms/powershell 安装后重试。" 'Yellow'
-    exit 1
+# PS7 有就用 PS7（用户偏好）；没有就退回当前 PowerShell —— 两个脚本都没用
+# PS7-only 语法，Windows PowerShell 5.1 也能跑，少一道坎。
+if ($pwsh) {
+    $pwshPath = $pwsh.Source
+    $ver = & $pwshPath -NoProfile -c '$PSVersionTable.PSVersion.ToString()'
+    Say "✓ PowerShell 7: $pwshPath ($ver)"
+} else {
+    $pwshPath = (Get-Process -Id $PID).Path
+    Say "! 没找到 pwsh（PowerShell 7），改用当前 PowerShell $($PSVersionTable.PSVersion)" 'Yellow'
+    Say "  建议装 PS7：winget install --id Microsoft.PowerShell --source winget" 'Yellow'
 }
-$pwshPath = $pwsh.Source
-Say "✓ PowerShell 7: $pwshPath ($(& $pwshPath -NoProfile -c '$PSVersionTable.PSVersion.ToString()'))"
 
-# ── 2. 复制采集脚本 ──────────────────────────────────────────────────────────
+# ── 2. 准备采集脚本 ──────────────────────────────────────────────────────────
+# 同目录没有就下载。优先从 Mac 拿（局域网可达、不依赖 GitHub —— 仓库是 private，
+# NUC9 上没凭据 clone 不了），Mac 拿不到再试 GitHub raw。
 if (-not (Test-Path $src)) {
-    Say "✗ 找不到 $src（应与本安装器同目录）" 'Red'
-    exit 1
+    $tried = @()
+    # 候选 Mac 地址：显式参数 → 缓存 → 常见网段
+    $cands = @()
+    if ($MacIp) { $cands += $MacIp }
+    try {
+        $cf = "$env:LOCALAPPDATA\win-metrics\mac-ip.txt"
+        if (Test-Path $cf) {
+            $cached = (Get-Content $cf -ErrorAction Stop | Select-Object -First 1)
+            if ($cached) { $cands += $cached.Trim() }
+        }
+    } catch { }
+    $cands += @('192.168.1.112', '192.168.15.201')
+
+    foreach ($c in ($cands | Select-Object -Unique)) {
+        if (-not $c) { continue }
+        $tried += $c
+        # 先探活（/lan.txt 返回 Mac 的局域网 IP），确认是 Mac 再下
+        try {
+            $probe = Invoke-WebRequest -Uri "http://${c}:${Port}/lan.txt" `
+                -UseBasicParsing -TimeoutSec 3
+            if ($probe.StatusCode -ne 200 -or -not $probe.Content) { continue }
+        } catch { continue }
+        try {
+            Invoke-WebRequest -Uri "http://${c}:${Port}/win/win-metrics.ps1" `
+                -OutFile $src -UseBasicParsing -TimeoutSec 8
+            Say "✓ 已从 Mac 下载采集脚本: $c (Mac IP $($probe.Content.Trim()))" 'Green'
+            $MacIp = $probe.Content.Trim()   # 顺手把真实 IP 记下来，后面传给采集脚本
+            break
+        } catch { }
+    }
+    if (-not (Test-Path $src)) {
+        Say "从 Mac 下载失败（试过: $($tried -join ', ')），改试 GitHub raw…" 'Yellow'
+        try {
+            Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/cpufreestyle/kindle-mac-panel/main/win-metrics.ps1' `
+                -OutFile $src -UseBasicParsing -TimeoutSec 30
+            Say "✓ 已下载: $src"
+        } catch {
+            Say "✗ 下载失败: $($_.Exception.Message)" 'Red'
+            Say "  把 win-metrics.ps1 手动放到本脚本同目录即可" 'Yellow'
+            exit 1
+        }
+    }
 }
 $dst = $null
 try {

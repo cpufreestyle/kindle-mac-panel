@@ -29,35 +29,53 @@ NUC9 的 SSH(22) 需要密码、SMB(445) 需要认证、WinRM(5985) 没开，Mac
 
 NUC9 上已有 Jellyfin(8096) 和 dvpack(8899)，用 **PowerShell 7**（`pwsh`）。
 
-### 最快路径：两条命令
+### 最快路径：一行命令
 
-NUC9 上有 git（dvpack 就是这么装的），直接克隆仓库再跑安装器：
+> **仓库是 private**，`git clone https://github.com/...` 在 NUC9 上会失败（没凭据）。
+> 所以走 **Mac 提供文件下载** —— NUC9 到 Mac 的 18866 本来就通（采集要用它）。
+
+在 NUC9 的**管理员** PowerShell 里粘贴这一行：
+
+```powershell
+iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1
+```
+
+这一行会：
+
+1. 从 Mac 下载安装器（`/win/install-win-metrics.ps1`）
+2. 安装器自己从 Mac 下载采集脚本到 `C:\win-metrics.ps1`
+   （先用 `/lan.txt` 探活确认哪个候选是 Mac，顺手把真实 IP 记下来传给采集脚本）
+3. 注册开机自启计划任务 `win-metrics`（SYSTEM 账号）
+4. 启动任务
+5. 自动跑一次自检并打印结果
+
+> Mac IP 若变了（`ipconfig getifaddr en0`），把命令里的 IP 换掉；
+> 采集脚本本身也会自动发现并缓存。
+
+装完 Mac 面板上会出现 **WIN · NUC9 · 在线** 卡片。
+
+### 备选路径
+
+<details>
+<summary>有 GitHub 凭据时</summary>
 
 ```powershell
 git clone https://github.com/cpufreestyle/kindle-mac-panel.git C:\kp
 powershell -ExecutionPolicy Bypass -File C:\kp\install-win-metrics.ps1
 ```
+</details>
 
-> **用「管理员」PowerShell 跑第二条**（Register-ScheduledTask 要提权）。
-> 安装器会：检查 PS7 → 把采集脚本复制到 `C:\win-metrics.ps1` → 注册开机自启计划任务
-> `win-metrics`（SYSTEM 账号）→ 启动任务 → 自动跑一次自检并打印结果。
-
-成功后 Mac 面板上会出现 **WIN · NUC9 · 在线** 卡片。
-
-### 手动路径（不想用安装器时）
-
-#### 1. 拷脚本
-
-把 `win-metrics.ps1` 放到 NUC9 的 `C:\win-metrics.ps1`（短路径）。
-
-#### 2. 先手工跑一次看输出
+<details>
+<summary>手动装（不想跑安装器）</summary>
 
 ```powershell
+iwr http://192.168.1.112:18866/win/win-metrics.ps1 -OutFile C:\win-metrics.ps1
 cd C:\
 pwsh -NoProfile -File .\win-metrics.ps1 -Check
 ```
+</details>
 
-会打印主机名、接收端、每项采集值、推送内容和推送结果：
+### 自检输出长什么样
 
 ```
 主机名     : NUC9
@@ -74,15 +92,9 @@ CPU        : 23.5
 - `netDownKBs/netUpKBs` 不在 `-Check` 输出里 —— 网速靠两次采样差分，
   第一次没有基线；常驻跑起来后第二次起就有值。
 - `tempC` 读不到（多数台式机没有 ACPI 温度区）是正常的。
-- Mac 地址**自动发现**，不用手填；发现结果缓存在
-  `%LOCALAPPDATA%\win-metrics\mac-ip.txt`。
+- Mac 侧的推送日志：`/tmp/kindle-win.log`（每条推送记来源 IP 和各值，被拒时记原因）。
 
-#### 3. 确认 Mac 收到了
-
-在 Mac 上开面板 http://192.168.1.112:18866/panel.html ，应出现 **WIN · NUC9 · 在线** 卡片。
-Mac 侧的推送日志：`/tmp/kindle-win.log`（每条推送记来源 IP 和各值，被拒时记原因）。
-
-#### 4. 装成开机自启（计划任务）
+### 手动装成开机自启（不用安装器时）
 
 用**管理员** PowerShell：
 
@@ -92,21 +104,19 @@ $action = New-ScheduledTaskAction -Execute 'pwsh.exe' `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $script"
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 Register-ScheduledTask -TaskName 'win-metrics' -Action $action -Trigger $trigger `
-    -Principal $principal -Description '推送 Windows 指标到 Mac 运维值班台' -Force
-```
-
-立即启动验证：
-
-```powershell
+    -Principal $principal -Settings $settings `
+    -Description '推送 Windows 指标到 Mac 运维值班台' -Force
 Start-ScheduledTask -TaskName 'win-metrics'
 ```
 
 > 用 SYSTEM 账号 + `AtStartup` 触发：开机就跑，不依赖用户登录。
 > `pwsh.exe` 需在 PATH 里；若装在非默认位置，把 `-Execute` 改成完整路径
 > （如 `C:\Program Files\PowerShell\7\pwsh.exe`）。
-> 计划任务默认会限制运行时长，常驻脚本需要
-> `-Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero))`。
+> **`-ExecutionTimeLimit ([TimeSpan]::Zero)` 必须加** —— 计划任务默认的运行时长限制
+> 会把常驻脚本掐掉。
 
 ### 5. 防火墙
 

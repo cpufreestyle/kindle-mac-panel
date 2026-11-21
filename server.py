@@ -51,6 +51,9 @@ HIST_WDISK = []    # Windows 磁盘使用率（%）
 HIST_WNETD = []    # Windows 下行 KB/s
 HIST_WNETU = []    # Windows 上行 KB/s
 
+# 允许局域网下载的 Windows 侧脚本（白名单）
+WIN_FILES = ("win-metrics.ps1", "install-win-metrics.ps1")
+
 # 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
 HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
 QSTATS_FILE = os.environ.get("QSTATS_METRICS", "/tmp/qstats-metrics.json")
@@ -1804,6 +1807,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/lan.txt"):
             self._send(200, mac_lan_ip() + "\n", "text/plain; charset=utf-8")
+            return
+        if p.startswith("/win/"):
+            # Windows 采集脚本下载（白名单，不做任意路径读，防路径穿越）
+            fname = p[len("/win/"):]
+            if fname not in WIN_FILES:
+                self._send(404, b"NF", "text/plain")
+                return
+            try:
+                with open(os.path.join(BASE, fname), "rb") as f:
+                    data = f.read()
+                self._send_bytes(200, data, "text/plain; charset=utf-8")
+            except OSError:
+                self._send(404, b"NF", "text/plain")
             return
         if p.startswith("/vp"):
             try:

@@ -104,14 +104,26 @@ New-NetFirewallRule -DisplayName 'win-metrics out' -Direction Outbound `
 | 位置 | 内容 |
 |---|---|
 | `POST /api/push/win` | 接收 JSON 推送 |
-| `win_push()` | 字段校验（只收数值）、写快照、追加历史曲线 |
-| `win_snapshot()` | 读快照，>30s 判离线 |
+| `win_push()` / `win_snapshot()` | 快照缓存 + 30s TTL 离线判定 |
 | `_win_card_html()` | 渲染 WIN 卡（CPU/内存/磁盘 文本 + 两条曲线） |
-| `HIST_WCPU/WMEM/WDISK/WNETD/WNETU` | Windows 历史（240 点 ≈ 20 分钟） |
-| `/sparkpng/wincpu.png` `/sparkpng/winnet.png` | 曲线图 |
-| `fetchloop-v10.sh` | Kindle 侧多拉两张图 |
+| `HIST_WCPU/WMEM/WDISK/WNETD/WNETU` | Windows 历史（240 点） |
+| `/sparkpng/wincpu.png` `/sparkpng/winnet.png` | 曲线图（仅浏览器端用） |
+| `render_panel(kindle=...)` | 按 User-Agent 分流：curl=Kindle，浏览器=完整版 |
 
 Mac 的 18866 已绑定 `0.0.0.0`，macOS 防火墙当前关闭，局域网内可直接访问。
+
+### 两种呈现形态
+
+Kindle 上显示的 index.html 是 fetchloop 用 **curl** 抓的，浏览器是浏览器 UA，
+服务端据此分流：
+
+| | WIN 卡 | 滚动 |
+|---|---|---|
+| **Kindle**（curl） | 两行纯文字（无曲线图） | 固定一屏，不滚动 |
+| **浏览器** | 文字 + CPU/内存曲线 + 网速曲线 | 页面可滚动 |
+
+墨水屏只有 1072×1448 且 `overflow:hidden` 不滚动，完整 WIN 卡（351px）会把
+底部建议行裁掉，所以 Kindle 版只给文字（净高 1279px，留 169px 余量）。
 
 ---
 

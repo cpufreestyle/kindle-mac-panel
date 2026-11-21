@@ -117,38 +117,41 @@ while ($true) {
     $mem = Get-MemInfo
     $disk = Get-DiskInfo
 
-    # 网速：本次字节数 - 上次字节数，再除以时间差
+    # 网速：本次累计字节数 - 上次累计字节数，再除以时间差
+    # 性能：perf 原始数据只查一次，再按网卡名匹配（原来每张网卡查一次，N+1 次 CIM）
     $downKBs = $null
     $upKBs = $null
     try {
         $adapters = Get-CimInstance Win32_NetworkAdapter -Filter 'PhysicalAdapter=True AND NetEnabled=True'
-        $cur = @{}
-        foreach ($a in $adapters) {
-            $s = Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface |
-                Where-Object { $_.Name -eq $a.NetConnectionID }
-            if ($s) {
-                $cur[$a.NetConnectionID] = @{
-                    recv = [double]$s.BytesReceivedPersec
-                    sent = [double]$s.BytesSentPersec
-                }
-            }
-        }
-        if ($prevBytes -and $prevTime) {
-            $dt = ($now - $prevTime).TotalSeconds
-            if ($dt -gt 0) {
-                $d = 0.0; $u = 0.0
-                foreach ($k in $cur.Keys) {
-                    if ($prevBytes.ContainsKey($k)) {
-                        $d += [math]::Max(0, $cur[$k].recv - $prevBytes[$k].recv)
-                        $u += [math]::Max(0, $cur[$k].sent - $prevBytes[$k].sent)
+        if ($adapters) {
+            $names = @($adapters | ForEach-Object { $_.NetConnectionID })
+            $perf = Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface
+            $cur = @{}
+            foreach ($s in $perf) {
+                if ($names -contains $s.Name) {
+                    $cur[$s.Name] = @{
+                        recv = [double]$s.BytesReceivedPersec
+                        sent = [double]$s.BytesSentPersec
                     }
                 }
-                $downKBs = [math]::Round($d / $dt / 1KB, 1)
-                $upKBs = [math]::Round($u / $dt / 1KB, 1)
             }
+            if ($prevBytes -and $prevTime) {
+                $dt = ($now - $prevTime).TotalSeconds
+                if ($dt -gt 0) {
+                    $d = 0.0; $u = 0.0
+                    foreach ($k in $cur.Keys) {
+                        if ($prevBytes.ContainsKey($k)) {
+                            $d += [math]::Max(0, $cur[$k].recv - $prevBytes[$k].recv)
+                            $u += [math]::Max(0, $cur[$k].sent - $prevBytes[$k].sent)
+                        }
+                    }
+                    $downKBs = [math]::Round($d / $dt / 1KB, 1)
+                    $upKBs = [math]::Round($u / $dt / 1KB, 1)
+                }
+            }
+            $prevBytes = $cur
+            $prevTime = $now
         }
-        $prevBytes = $cur
-        $prevTime = $now
     } catch { }
 
     $payload = @{

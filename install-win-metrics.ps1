@@ -25,7 +25,9 @@ param(
     # 采集间隔（秒）
     [int]$IntervalSec = 5,
     # 显式指定 Mac IP（留空 = 自动发现）
-    [string]$MacIp = ''
+    [string]$MacIp = '',
+    # Mac 上面板端口
+    [int]$Port = 18866
 )
 
 $ErrorActionPreference = 'Stop'
@@ -107,8 +109,16 @@ if (-not (Test-Path $src)) {
 $dst = $null
 try {
     $dst = Join-Path $InstallDir 'win-metrics.ps1'
-    Copy-Item -Path $src -Destination $dst -Force
-    Say "✓ 采集脚本已安装: $dst"
+    # 源和目标可能是同一个文件（安装器在 C:\、采集脚本也下到 C:\win-metrics.ps1），
+    # Copy-Item 同文件会报 "Cannot overwrite the item ... with itself"
+    $srcFull = [System.IO.Path]::GetFullPath($src)
+    $dstFull = [System.IO.Path]::GetFullPath($dst)
+    if ($srcFull -ine $dstFull) {
+        Copy-Item -Path $src -Destination $dst -Force
+        Say "✓ 采集脚本已安装: $dst"
+    } else {
+        Say "✓ 采集脚本已就位: $dst"
+    }
 } catch {
     Say "✗ 复制失败: $($_.Exception.Message)" 'Red'
     Say "  换个短路径试试，比如 -InstallDir C:\kp" 'Yellow'

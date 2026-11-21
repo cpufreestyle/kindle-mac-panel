@@ -891,8 +891,13 @@ def spark_snapshot(ttl=5):
 
 
 PANEL_CSS = """
-html, body { margin:0; padding:0; background:#fff; color:#000; height:100%; width:100%;
-  overflow:hidden; font-family:"Microsoft YaHei","Noto Sans CJK",sans-serif; }
+html { margin:0; padding:0; background:#fff; color:#000; width:100%; min-height:100%;
+  overflow:auto; font-family:"Microsoft YaHei","Noto Sans CJK",sans-serif; }
+body { margin:0; padding:0; background:#fff; color:#000; width:100%; min-height:100%; }
+/* Kindle（fetchloop 用 curl 抓的那份）固定一屏不滚动：墨水屏 1072×1448，
+   内容超了也够不着，只能靠服务端少给内容；浏览器版文档自然增长，可滚动 */
+html.k { height:100%; overflow:hidden; }
+html.k body { height:100%; overflow:hidden; }
 #app { min-height:100%; box-sizing:border-box; padding:8px 22px 10px 22px; }
 #head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:4px; }
 #title { float:left; font-size:44px; font-weight:bold; letter-spacing:0.08em; }
@@ -947,7 +952,7 @@ SCRIPT_JS = (
     "for(var c in window.__tgnm){var im=document.getElementById(c);"
     "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
     "}};x.send()},8000);"
-        "window.__tgnm={cv:'cpu',cv2:'membar',cv3:'diskread',cv4:'diskwrite',cv5:'netdown',cv6:'netup',cv7:'memtrend',cv8:'dgxutil',cv9:'dgxtemp',cv10:'wincpu',cv11:'winnet'};"
+    "window.__tgnm={cv:'cpu',cv2:'membar',cv3:'diskread',cv4:'diskwrite',cv5:'netdown',cv6:'netup',cv7:'memtrend',cv8:'dgxutil',cv9:'dgxtemp',cv10:'wincpu',cv11:'winnet'};"
 )
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
@@ -1129,15 +1134,19 @@ def render_history():
             '<table>' + rows + '</table><p>每 5 分钟采样 · refresh-now 可手动刷新数据</p></body></html>')
 
 
-def _win_card_html(rev):
-    """Windows 主机卡：从未收到过数据就不渲染（不占版面）；收到过但超时的显示离线。"""
+def _win_card_html(rev, kindle=False):
+    """Windows 主机卡：从未收到过数据就不渲染（不占版面）；收到过但超时的显示离线。
+
+    kindle=True（fetchloop 用 curl 抓的那份）只出文字行 —— 墨水屏 1072×1448
+    装不下两张曲线图（body overflow:hidden 不滚动，会把底部内容裁掉）。
+    """
     w = win_snapshot()
     host = w.get("host") or "WIN"
     if not w.get("ok"):
         # 离线：只在曾经收过数据时占一行提示
         if not _WIN["data"]:
             return ""
-        return ('<div class="card compact"><div class="sech compact">WIN · ' + host +
+        return ('<div class="card compact win"><div class="sech compact">WIN · ' + host +
                 ' · 离线（' + str(int(w.get("age") or 0)) + 's 前）</div></div>')
 
     def fnum(x, fmt):
@@ -1154,20 +1163,30 @@ def _win_card_html(rev):
     up = w.get("uptimeSec")
     up_s = ("%dd %dh" % (int(up) // 86400, (int(up) % 86400) // 3600)) if isinstance(up, (int, float)) else "--"
     temp_s = fnum(w.get("tempC"), "%.0f°C")
+    down = w.get("netDownKBs")
+    upk = w.get("netUpKBs")
+    net_s = ("↓" + fnum(down, "%.0f") + " ↑" + fnum(upk, "%.0f") + " KB/s")
+    head = ('<div class="sech compact">WIN · ' + host + ' · 在线 · CPU '
+            + '<span id="wcpu">' + fnum(cpu, "%.0f") + '</span>% · 内存 '
+            + '<span id="wmem">' + fnum(mem_pct, "%.0f") + '</span>% · 磁盘 '
+            + '<span id="wdisk">' + fnum(disk_pct, "%.0f") + '</span>%</div>')
+    detail = ('<div class="kv">内存 ' + mem_s + ' · 磁盘 ' + disk_s + ' · 剩 '
+              + fnum(df, "%.0fG") + ' · 温度 ' + temp_s + ' · 运行 ' + up_s + '</div>')
+    if kindle:
+        # 墨水屏：文字两行，不放曲线图
+        return ('<div class="card compact win">' + head +
+                '<div class="kv">↓' + fnum(down, "%.0f") + ' ↑' + fnum(upk, "%.0f") +
+                ' KB/s · ' + mem_s + ' · ' + disk_s + ' · ' + temp_s + '</div></div>')
     return (
-        '<div class="card compact"><div class="sech compact">WIN · ' + host + ' · 在线 · CPU '
-        + '<span id="wcpu">' + fnum(cpu, "%.0f") + '</span>% · 内存 '
-        + '<span id="wmem">' + fnum(mem_pct, "%.0f") + '</span>% · 磁盘 '
-        + '<span id="wdisk">' + fnum(disk_pct, "%.0f") + '</span>%</div>'
-        '<img id="cv10" class="chart" src="sparkwincpu' + rev + '.png">'
-        '<img id="cv11" class="chart" src="sparkwinnet' + rev + '.png">'
-        '<div class="kv">内存 ' + mem_s + ' · 磁盘 ' + disk_s + ' · 剩 '
-        + fnum(df, "%.0fG") + ' · 温度 ' + temp_s + ' · 运行 ' + up_s + '</div>'
-        '</div>'
+        '<div class="card compact win">' + head
+        + '<img id="cv10" class="chart" src="sparkwincpu' + rev + '.png">'
+        + '<img id="cv11" class="chart" src="sparkwinnet' + rev + '.png">'
+        + detail
+        + '</div>'
     )
 
 
-def render_panel():
+def render_panel(kindle=False):
     d = collect()
     _wx_read()
 
@@ -1341,7 +1360,7 @@ def render_panel():
     _rev = "_a" if int(time.time()) % 2 == 0 else "_b"
     _temp_img = "sparkmemtrend" + _rev + ".png"
     return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<!DOCTYPE html><html' + (' class="k"' if kindle else '') + '><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">'
         '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">'
         '<meta http-equiv="Pragma" content="no-cache">'
@@ -1378,7 +1397,7 @@ def render_panel():
         '<img id="cv8" class="chart" src="sparkdgxutil' + _rev + '.png">'
         '<img id="cv9" class="chart" src="sparkdgxtemp' + _rev + '.png">'
         '</div>'
-        + _win_card_html(_rev)
+        + _win_card_html(_rev, kindle)
         + '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + '</div>'
         "</div></body></html>"
     )
@@ -1772,7 +1791,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/panel.html"):
             try:
-                self._send(200, render_panel(), "text/html; charset=utf-8")
+                # Kindle 的 index.html 是 fetchloop 用 curl 抓的（User-Agent=curl/…），
+                # 屏幕 1072×1448 且 overflow:hidden 不滚动 → 收掉 WIN 卡的曲线图，只留文字行。
+                _ua = (self.headers.get("User-Agent") or "").lower()
+                self._send(200, render_panel(kindle="curl" in _ua),
+                           "text/html; charset=utf-8")
             except Exception:
                 import traceback
                 with open("/tmp/panel_err.log", "a") as f:

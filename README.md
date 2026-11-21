@@ -137,6 +137,16 @@ python3 deploy-ss.py            # 重推屏保链路（幂等，含原图备份�
 python3 deploy-cleanup.py       # 清理探测 / --apply 执行
 ```
 
+### Windows 主机排查
+
+```bash
+tail -f /tmp/kindle-win.log    # 推送日志：来源 IP、host、各值；被拒记原因
+launchctl list | grep com.kindle.panel   # 面板服务是否在跑
+curl -s http://127.0.0.1:18866/lan.txt    # 本机局域网 IP（Windows 侧自动发现用）
+```
+
+Windows 侧自检（一条命令定位问题）：`pwsh -NoProfile -File C:\win-metrics.ps1 -Check`
+
 ## 屏保恢复原厂
 
 ```bash

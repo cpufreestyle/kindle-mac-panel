@@ -31,22 +31,22 @@ $endpoint = "http://${MacIp}:${Port}/api/push/win"
 # ── 采集工具函数 ────────────────────────────────────────────────────────────
 
 function Get-CpuUsagePercent {
-    # 首选 PerfFormattedData（已算好的百分比，无需等待采样窗口）
+    # 首选 Get-Counter：自带 1 秒采样窗口，值总是准的。
+    # WMI Formatted 类需要「两次采样」才准（第一次读可能是陈值/乱值），不能做首选。
+    try {
+        $c = Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 1
+        return [math]::Round($c.CounterSamples[0].CookedValue, 1)
+    } catch { }
+    # 回退：WMI Formatted（_Total 是 0–100 的整机占用，不是各核求和）
     try {
         $p = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
         if ($p) { return [math]::Round([double]$p.PercentProcessorTime, 1) }
     } catch { }
-    # 回退：Get-Counter（要等 1 秒采样窗口）
+    # 兜底：LoadPercentage（部分机器不准，仅作保底）
     try {
-        $c = Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 1
-        return [math]::Round($c.CounterSamples[0].CookedValue, 1)
-    } catch {
-        # 兜底：LoadPercentage（部分机器不准，仅作保底）
-        try {
-            $s = Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average
-            return [math]::Round($s.Average, 1)
-        } catch { return $null }
-    }
+        $s = Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average
+        return [math]::Round($s.Average, 1)
+    } catch { return $null }
 }
 
 function Get-MemInfo {
@@ -140,13 +140,19 @@ while ($true) {
             if ($prevBytes -and $prevTime) {
                 $dt = ($now - $prevTime).TotalSeconds
                 if ($dt -gt 0) {
-                    $d = 0.0; $u = 0.0
-                    foreach ($k in $cur.Keys) {
-                        if ($prevBytes.ContainsKey($k)) {
-                            $d += [math]::Max(0, $cur[$k].recv - $prevBytes[$k].recv)
-                            $u += [math]::Max(0, $cur[$k].sent - $prevBytes[$k].sent)
-                        }
+                $d = 0.0; $u = 0.0
+                foreach ($k in $cur.Keys) {
+                    if ($prevBytes.ContainsKey($k)) {
+                        # BytesReceivedPersec/BytesSentPersec 是 32 位累计计数器，
+                        # 高速链路上会回绕（4GB）—— 差分为负说明回绕了，加回 2^32
+                        $dr = $cur[$k].recv - $prevBytes[$k].recv
+                        if ($dr -lt 0) { $dr += 4294967296 }
+                        $ds = $cur[$k].sent - $prevBytes[$k].sent
+                        if ($ds -lt 0) { $ds += 4294967296 }
+                        $d += $dr
+                        $u += $ds
                     }
+                }
                     $downKBs = [math]::Round($d / $dt / 1KB, 1)
                     $upKBs = [math]::Round($u / $dt / 1KB, 1)
                 }
@@ -179,16 +185,15 @@ while ($true) {
     # 用 -InputObject 而不是管道：管道对 OrderedDictionary 的处理依赖版本行为
     $body = ConvertTo-Json -InputObject $clean -Compress -Depth 3
 
-    if ($Once) {
-        Write-Host $body
-        break
-    }
-
     try {
         Invoke-RestMethod -Uri $endpoint -Method Post -Body $body -ContentType 'application/json' -TimeoutSec 5 | Out-Null
+        if ($Once) { Write-Host "win-metrics: 已推送 $body" }
     } catch {
         Write-Host "win-metrics: 推送失败 $($_.Exception.Message)"
+        if ($Once) { Write-Host "win-metrics: 本次采集 $body" }
     }
+
+    if ($Once) { break }
 
     Start-Sleep -Seconds $IntervalSec
 }

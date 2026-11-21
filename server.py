@@ -39,6 +39,18 @@ HIST_MSWAP = []    # Swap GB
 HIST_DGXU = []     # DGX GPU 利用率（%）
 HIST_DGXT = []     # DGX GPU 温度（°C）
 
+# ── Windows 主机接入（NUC9 等）──────────────────────────────────────────────
+# Windows 侧采集器（win-metrics.ps1）每 5s POST 一次 JSON 到 /api/push/win，
+# Mac 端缓存最新快照，面板渲染 WIN 卡。数据超过 WIN_TTL 视为离线。
+WIN_TTL = 30.0
+_WIN = {"ts": 0.0, "data": None}
+_WIN_LOCK = threading.Lock()
+HIST_WCPU = []     # Windows CPU 使用率（%）
+HIST_WMEM = []     # Windows 内存使用率（%）
+HIST_WDISK = []    # Windows 磁盘使用率（%）
+HIST_WNETD = []    # Windows 下行 KB/s
+HIST_WNETU = []    # Windows 上行 KB/s
+
 # 历史持久化文件（部署到其他机器时同步修改此绝对路径；与 BASE 同目录）
 HIST_FILE = "/Users/a1-6/kindle-panel/hists.json"
 QSTATS_FILE = os.environ.get("QSTATS_METRICS", "/tmp/qstats-metrics.json")
@@ -77,18 +89,51 @@ def _hload():
     HIST_MSWAP[:] = d.get("mswap") or []
     HIST_DGXU[:] = d.get("dgxu") or []
     HIST_DGXT[:] = d.get("dgxt") or []
+    HIST_WCPU[:] = d.get("wcpu") or []
+    HIST_WMEM[:] = d.get("wmem") or []
+    HIST_WDISK[:] = d.get("wdisk") or []
+    HIST_WNETD[:] = d.get("wnetd") or []
+    HIST_WNETU[:] = d.get("wnetu") or []
+
+
+_HIST_LOCK = threading.Lock()
 
 
 def _hsave():
+    # 采样线程和 HTTP 推送线程都会调；不加锁时 json.dump 遍历 list 会撞上
+    # 另一线程的 append，可能抛 "list changed size during iteration" 并写坏文件。
     try:
-        json.dump({"cpu": HIST_CPU, "mem": HIST_MEM, "temp": HIST_TEMP,
-                   "swap": HIST_SWAP, "disk": HIST_DISK, "gpu": HIST_GPU,
-                   "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD,
-                   "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB,
-                   "ior": HIST_IOR, "iow": HIST_IOW, "nd": HIST_ND, "nu": HIST_NU,
-                   "mcomp": HIST_MCOMP, "mswap": HIST_MSWAP,
-                   "dgxu": HIST_DGXU, "dgxt": HIST_DGXT},
-                  open(HIST_FILE, "w"))
+        with _HIST_LOCK:
+            payload = {"cpu": HIST_CPU, "mem": HIST_MEM, "temp": HIST_TEMP,
+                       "swap": HIST_SWAP, "disk": HIST_DISK, "gpu": HIST_GPU,
+                       "kb": HIST_KB, "km": HIST_KM, "kd": HIST_KD,
+                       "tw": HIST_TW, "tn": HIST_TN, "tb": HIST_TB,
+                       "ior": HIST_IOR, "iow": HIST_IOW, "nd": HIST_ND, "nu": HIST_NU,
+                       "mcomp": HIST_MCOMP, "mswap": HIST_MSWAP,
+                       "dgxu": HIST_DGXU, "dgxt": HIST_DGXT,
+                       "wcpu": HIST_WCPU, "wmem": HIST_WMEM, "wdisk": HIST_WDISK,
+                       "wnetd": HIST_WNETD, "wnetu": HIST_WNETU}
+            # 先拷一份快照再序列化，避免持锁期间 list 被改
+            snap = {k: list(v) for k, v in payload.items()}
+            # 同目录临时文件 + 原子替换：写一半崩溃也不会留下半个 hists.json
+            import tempfile
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(HIST_FILE),
+                                       prefix=".hists-", suffix=".tmp")
+            try:
+                # mkstemp 默认 600，替换前把原文件权限还原回去
+                try:
+                    os.chmod(tmp, os.stat(HIST_FILE).st_mode & 0o777)
+                except OSError:
+                    os.chmod(tmp, 0o644)
+                with os.fdopen(fd, "w") as f:
+                    json.dump(snap, f)
+                os.replace(tmp, HIST_FILE)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
     except Exception:
         pass
 
@@ -158,9 +203,14 @@ def _spark(vals, vmax, width=26):
 
 def spark_payload():
     """四条趋势 span 的最新波形（供 /spark.json 与面板首渲染共用；峰值在 .dt 静态行）
-    层级：CPU/内存主指标 44px×21 点，磁盘次级 34px×26 点，Swap 行内小字 20 点"""
+    层级：CPU/内存主指标 44px×21 点，磁盘次级 34px×26 点，Swap 行内小字 20 点
+    wcpu/wmem/wdisk 是 Windows 主机的标量值，script.js 按 id 更新 WIN 卡文本"""
+    _w = win_snapshot()
     return {"spc": _spark(HIST_CPU, 100, 21), "spm": _spark(HIST_MEM, 100, 21),
-            "sps": _spark(HIST_SWAP, 100, 20), "spd": _spark(HIST_DISK, 100, 26)}
+            "sps": _spark(HIST_SWAP, 100, 20), "spd": _spark(HIST_DISK, 100, 26),
+            "wcpu": ("%.0f" % _w["cpu"]) if _w.get("ok") and isinstance(_w.get("cpu"), (int, float)) else "",
+            "wmem": ("%.0f" % _w["memPct"]) if _w.get("ok") and isinstance(_w.get("memPct"), (int, float)) else "",
+            "wdisk": ("%.0f" % _w["diskPct"]) if _w.get("ok") and isinstance(_w.get("diskPct"), (int, float)) else ""}
 
 
 def _hmax2(vals):
@@ -698,6 +748,7 @@ def _collect_uncached():
         "load": {"l1": round(l1, 2), "l5": round(l5, 2), "l15": round(l15, 2)},
         "uptime": uptime,
         "source": "qstats" if qs else "local",
+        "win": win_snapshot(),
     }
 
 
@@ -731,12 +782,57 @@ def _start_sampler():
     threading.Thread(target=loop, daemon=True).start()
 
 
+def win_push(payload):
+    """接收 Windows 采集器推送的 JSON 快照。字段缺失或类型不对一律丢弃。"""
+    if not isinstance(payload, dict):
+        return False
+
+    def num(v):
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    out = {"host": str(payload.get("host") or "WIN")[:32]}
+    for k in ("cpu", "memPct", "diskPct", "netDownKBs", "netUpKBs",
+              "memUsedGB", "memTotalGB", "diskUsedGB", "diskTotalGB",
+              "diskFreeGB", "uptimeSec", "tempC"):
+        v = num(payload.get(k))
+        if v is not None:
+            out[k] = v
+    if "cpu" not in out:
+        return False
+    out["ts"] = time.time()
+    with _WIN_LOCK:
+        _WIN["data"] = out
+        _WIN["ts"] = out["ts"]
+    # 追加历史曲线（每个 push 一点）
+    for arr, key in ((HIST_WCPU, "cpu"), (HIST_WMEM, "memPct"),
+                     (HIST_WDISK, "diskPct"), (HIST_WNETD, "netDownKBs"),
+                     (HIST_WNETU, "netUpKBs")):
+        arr.append(out.get(key))
+        if len(arr) > 240:
+            arr.pop(0)
+    _hsave()
+    return True
+
+
+def win_snapshot():
+    """Windows 主机最新快照；超过 WIN_TTL 视为离线（返回 ok=False，不阻断面板）。"""
+    with _WIN_LOCK:
+        data = _WIN["data"]
+        ts = _WIN["ts"]
+    age = round(time.time() - ts, 1) if ts else 0.0
+    if not data or age > WIN_TTL:
+        return {"ok": False, "host": (data or {}).get("host", "WIN"), "age": age}
+    out = dict(data)
+    out["ok"] = True
+    out["age"] = age
+    return out
+
+
 def collect():
     _start_sampler()
     with _SNAP_LOCK:
         data = _SNAP["data"]
-    if data is not None:
-        return data
+    if data is not None:        return data
     return _sample_and_store()
 
 
@@ -851,7 +947,7 @@ SCRIPT_JS = (
     "for(var c in window.__tgnm){var im=document.getElementById(c);"
     "if(im)im.src='spark'+window.__tgnm[c]+'_'+(tg?'a':'b')+'.png';}"
     "}};x.send()},8000);"
-        "window.__tgnm={cv:'cpu',cv2:'membar',cv3:'diskread',cv4:'diskwrite',cv5:'netdown',cv6:'netup',cv7:'memtrend',cv8:'dgxutil',cv9:'dgxtemp'};"
+        "window.__tgnm={cv:'cpu',cv2:'membar',cv3:'diskread',cv4:'diskwrite',cv5:'netdown',cv6:'netup',cv7:'memtrend',cv8:'dgxutil',cv9:'dgxtemp',cv10:'wincpu',cv11:'winnet'};"
 )
 
 LAYTEST_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>LAY</title><style>
@@ -1031,6 +1127,44 @@ def render_history():
             '<div class="lg"><span>━ CPU%（黑）</span><span>━ 温度°C（深灰）</span>'
             '<span>━ Swap G（浅灰，满量程 32G）</span></div>' + svg +
             '<table>' + rows + '</table><p>每 5 分钟采样 · refresh-now 可手动刷新数据</p></body></html>')
+
+
+def _win_card_html(rev):
+    """Windows 主机卡：从未收到过数据就不渲染（不占版面）；收到过但超时的显示离线。"""
+    w = win_snapshot()
+    host = w.get("host") or "WIN"
+    if not w.get("ok"):
+        # 离线：只在曾经收过数据时占一行提示
+        if not _WIN["data"]:
+            return ""
+        return ('<div class="card compact"><div class="sech compact">WIN · ' + host +
+                ' · 离线（' + str(int(w.get("age") or 0)) + 's 前）</div></div>')
+
+    def fnum(x, fmt):
+        return (fmt % x) if isinstance(x, (int, float)) else "--"
+
+    cpu = w.get("cpu")
+    mem_pct = w.get("memPct")
+    disk_pct = w.get("diskPct")
+    mu, mt = w.get("memUsedGB"), w.get("memTotalGB")
+    du, dt = w.get("diskUsedGB"), w.get("diskTotalGB")
+    df = w.get("diskFreeGB")
+    mem_s = ("%.0f/%.0fG" % (mu, mt)) if isinstance(mu, (int, float)) and isinstance(mt, (int, float)) else "--"
+    disk_s = ("%.0f/%.0fG" % (du, dt)) if isinstance(du, (int, float)) and isinstance(dt, (int, float)) else "--"
+    up = w.get("uptimeSec")
+    up_s = ("%dd %dh" % (int(up) // 86400, (int(up) % 86400) // 3600)) if isinstance(up, (int, float)) else "--"
+    temp_s = fnum(w.get("tempC"), "%.0f°C")
+    return (
+        '<div class="card compact"><div class="sech compact">WIN · ' + host + ' · 在线 · CPU '
+        + '<span id="wcpu">' + fnum(cpu, "%.0f") + '</span>% · 内存 '
+        + '<span id="wmem">' + fnum(mem_pct, "%.0f") + '</span>% · 磁盘 '
+        + '<span id="wdisk">' + fnum(disk_pct, "%.0f") + '</span>%</div>'
+        '<img id="cv10" class="chart" src="sparkwincpu' + rev + '.png">'
+        '<img id="cv11" class="chart" src="sparkwinnet' + rev + '.png">'
+        '<div class="kv">内存 ' + mem_s + ' · 磁盘 ' + disk_s + ' · 剩 '
+        + fnum(df, "%.0fG") + ' · 温度 ' + temp_s + ' · 运行 ' + up_s + '</div>'
+        '</div>'
+    )
 
 
 def render_panel():
@@ -1244,7 +1378,8 @@ def render_panel():
         '<img id="cv8" class="chart" src="sparkdgxutil' + _rev + '.png">'
         '<img id="cv9" class="chart" src="sparkdgxtemp' + _rev + '.png">'
         '</div>'
-        '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + '</div>'
+        + _win_card_html(_rev)
+        + '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + '</div>'
         "</div></body></html>"
     )
 
@@ -1437,6 +1572,21 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 self._send(500, b"ERR", "text/plain")
             return
+        # Windows 主机指标推送（win-metrics.ps1 → POST JSON）
+        if self.path.startswith("/api/push/win"):
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                if ln <= 0 or ln > 64 * 1024:
+                    self._send(400, b"BADLEN", "text/plain")
+                    return
+                payload = json.loads(self.rfile.read(ln).decode("utf-8", "replace"))
+                if win_push(payload):
+                    self._send_bytes(200, b"OK", "text/plain")
+                else:
+                    self._send(400, b"BADDATA", "text/plain")
+            except Exception:
+                self._send(400, b"BADJSON", "text/plain")
+            return
         self._send(404, b"NF", "text/plain")
 
     def do_GET(self):
@@ -1448,7 +1598,7 @@ class Handler(BaseHTTPRequestHandler):
         # 面板 HTML 里图片用相对双缓冲名（sparkcpu_a.png）：Kindle 侧命中本地文件，
         # 浏览器经 HTTP 打开时映射回 /sparkpng/ 生成，同一份 HTML 两端都能出图。
         _m_sp = re.match(
-            r"^/spark(cpu|membar|memtrend|diskread|diskwrite|netdown|netup|dgxutil|dgxtemp)_[ab]\.png$", p)
+            r"^/spark(cpu|membar|memtrend|diskread|diskwrite|netdown|netup|dgxutil|dgxtemp|wincpu|winnet)_[ab]\.png$", p)
         if _m_sp:
             p = "/sparkpng/" + _m_sp.group(1) + ".png"
         if qs.startswith("k="):
@@ -1566,6 +1716,18 @@ class Handler(BaseHTTPRequestHandler):
                     png = render_curves_png(
                         [(HIST_NU, 110, 5)], h=48, font_size=24, compact=True,
                         legend_items=[("↑ %.0f KB/s" % _hlast(HIST_NU), 110, 5)])
+                elif nm == "wincpu":    # Windows CPU 黑实线 + 内存灰细线
+                    png = render_curves_png(
+                        [(HIST_WCPU, 0, 4), (HIST_WMEM, 110, 3)],
+                        h=120, font_size=40,
+                        legend_items=[("CPU %d%%" % _hmax2(HIST_WCPU), 0, 4),
+                                      ("内存 %d%%" % _hmax2(HIST_WMEM), 110, 3)])
+                elif nm == "winnet":    # Windows 网络下行黑实线 + 上行灰细线
+                    png = render_curves_png(
+                        [(HIST_WNETD, 0, 4), (HIST_WNETU, 110, 3)],
+                        h=120, font_size=40,
+                        legend_items=[("↓ %.0f KB/s" % _hlast(HIST_WNETD), 0, 4),
+                                      ("↑ %.0f KB/s" % _hlast(HIST_WNETU), 110, 3)])
                 elif nm == "dgxutil":    # DGX GPU 利用率：黑粗实线（与 CPU 同色）
                     png = render_curves_png(
                         [(HIST_DGXU, 0, 5)], h=40, font_size=22, compact=True, y_max=100,

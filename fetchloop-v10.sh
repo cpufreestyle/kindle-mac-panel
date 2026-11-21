@@ -48,7 +48,7 @@ while true; do
       mv -f $D/spark.json.new $D/spark.json
       cp $D/spark.json $DOC/spark.json
     fi
-    for C in cpu membar memtrend diskread diskwrite netdown netup dgxutil dgxtemp; do
+    for C in cpu membar memtrend diskread diskwrite netdown netup dgxutil dgxtemp wincpu winnet; do
       if curl -sf --max-time 6 "http://$OK:18866/sparkpng/$C.png" -o $D/spark$C.new \
          && [ -s $D/spark$C.new ]; then
         mv -f $D/spark$C.new $D/spark$C.png

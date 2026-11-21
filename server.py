@@ -420,6 +420,43 @@ def _top_procs_uncached(n=3):
     return result
 
 
+def _vmstat_mem():
+    """vm_stat → 与 qstats 同口径的内存四段分解。
+
+    口径（与 qstats 的 ram 字段保持一致，切换数据源时指标定义不变）：
+        free = free_pages + speculative + file_backed(cache)
+        used = total - free
+        wired = Pages wired down
+        comp  = Pages occupied by compressor
+        app   = used - wired - comp
+    任一项解析失败返回 None，调用方回退 psutil。
+    """
+    try:
+        import subprocess as _sp
+        out = _sp.run(["vm_stat"], capture_output=True, text=True, timeout=3).stdout
+        m = re.search(r"page size of (\d+)", out)
+        if not m:
+            return None
+        ps = int(m.group(1))
+
+        def pg(key):
+            mm = re.search(re.escape(key) + r":\s+(\d+)\.", out)
+            if not mm:
+                return None
+            return int(mm.group(1)) * ps
+
+        wired = pg("Pages wired down")
+        comp = pg("Pages occupied by compressor")
+        free_p = pg("Pages free")
+        spec = pg("Pages speculative")
+        cache = pg("File-backed pages")
+        if None in (wired, comp, free_p, spec, cache):
+            return None
+        return {"wired": wired, "comp": comp, "free": free_p + spec + cache}
+    except Exception:
+        return None
+
+
 def _collect_uncached():
     qs = _qstats_read()
     usage = round(psutil.cpu_percent(interval=0.3), 1)
@@ -454,7 +491,20 @@ def _collect_uncached():
     mem_used, mem_total, mem_pct = vm.used, vm.total, vm.percent
     disk_used, disk_free, disk_total, disk_pct = du.used, du.free, du.total, du.percent
     mem_app, mem_wired, mem_comp = vm.used, 0.0, 0.0
+    mem_free = max(vm.total - vm.used, 0)
     mem_swap, mem_pressure = sm.used, "--"
+    if not qs:
+        # 本机模式：psutil 不提供 compressed，且 used 的分母口径与 qstats 不同。
+        # 改用 vm_stat 推导四段，保证 App/Wired/Comp/Free 自洽且与 qstats 口径一致。
+        _vs = _vmstat_mem()
+        if _vs:
+            mem_total = vm.total
+            mem_free = _vs["free"]
+            mem_used = mem_total - mem_free
+            mem_pct = (mem_used / mem_total * 100) if mem_total else vm.percent
+            mem_wired = _vs["wired"]
+            mem_comp = _vs["comp"]
+            mem_app = max(mem_used - mem_wired - mem_comp, 0)
     if qs:
         _r = qs.get("ram") or {}
         if isinstance(_r.get("used"), (int, float)):
@@ -469,6 +519,10 @@ def _collect_uncached():
             mem_wired = _r["wired"]
         if isinstance(_r.get("compressed"), (int, float)):
             mem_comp = _r["compressed"]
+        if isinstance(_r.get("free"), (int, float)):
+            mem_free = _r["free"]
+        elif isinstance(_r.get("used"), (int, float)) and isinstance(_r.get("total"), (int, float)):
+            mem_free = max(_r["total"] - _r["used"], 0)
         if isinstance(_r.get("swap"), (int, float)):
             mem_swap = _r["swap"]
         if isinstance(_r.get("pressure"), str):
@@ -618,6 +672,7 @@ def _collect_uncached():
             "appGB": round(mem_app / 1024 ** 3, 1),
             "wiredGB": round(mem_wired / 1024 ** 3, 1),
             "compGB": round(mem_comp / 1024 ** 3, 1),
+            "freeGB": round(mem_free / 1024 ** 3, 1),
             "swapGB": round(mem_swap / 1024 ** 3, 1),
             "pressure": mem_pressure,
         },
@@ -968,11 +1023,11 @@ def render_history():
         tm = max(tt, key=lambda x: x[1])
         rows += ('<tr><td>温度峰值</td><td>%d°C @ %s</td></tr>' % (tm[1], tm[0]))
     rows += ('<tr><td>样本</td><td>%d 点（5 分钟/点，约 24h）</td></tr>' % len(hist))
-    return ('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mac 24h 历史</title>'
+    return ('<!DOCTYPE html><html><head><meta charset="utf-8"><title>运维值班台 24h 历史</title>'
             '<style>body{font-family:"Microsoft YaHei",sans-serif;margin:30px;color:#000}'
             'table{border-collapse:collapse;margin-top:16px}td{border:1px solid #999;'
             'padding:6px 18px}h2{margin-bottom:4px}.lg span{margin-right:24px}</style></head><body>'
-            '<h2>Mac 24 小时历史</h2>'
+            '<h2>运维值班台 24 小时历史</h2>'
             '<div class="lg"><span>━ CPU%（黑）</span><span>━ 温度°C（深灰）</span>'
             '<span>━ Swap G（浅灰，满量程 32G）</span></div>' + svg +
             '<table>' + rows + '</table><p>每 5 分钟采样 · refresh-now 可手动刷新数据</p></body></html>')
@@ -1148,7 +1203,7 @@ def render_panel():
     _sp_mem = ("%.0f/%.0fG" % (_mu / 1024.0, _mt / 1024.0)) if isinstance(_mu, (int, float)) and isinstance(_mt, (int, float)) else "--"
     qstats_linked = d.get("source") == "qstats"
     src_badge = " · Q · P3" if qstats_linked else " · P3"
-    panel_title = "QSTATS" if qstats_linked else "MAC 面板"
+    panel_title = "QSTATS" if qstats_linked else "运维值班台"
     _rev = "_a" if int(time.time()) % 2 == 0 else "_b"
     _temp_img = "sparkmemtrend" + _rev + ".png"
     return (
@@ -1158,7 +1213,7 @@ def render_panel():
         '<meta http-equiv="Pragma" content="no-cache">'
         '<meta http-equiv="Expires" content="0">'
         # meta refresh 300 已删：mesquite 每 300s 执行重载回调必崩（无触碰也弹「应用程序出错」的元凶）
-        "<title>Mac 面板</title><style>" + PANEL_CSS + "</style>"
+        "<title>运维值班台</title><style>" + PANEL_CSS + "</style>"
         # 外链 script.js（象棋/番茄钟验证过的加载模式，内联 script 执行不稳定）：
         # 每 60s 轮询 spark.json 更新文本 + img 双缓冲切换；tick 探针显示 JS 心跳分钟
         '<script src="probe.js"></script></head>'
@@ -1171,7 +1226,7 @@ def render_panel():
         '<div class="dt">峰 ' + str(_hmax(HIST_CPU)) + '% · 15分均 ' + str(avg15) + '% · CPU ' + temp_s + '</div></div>'
         '<div class="card"><div class="sech">RAM · ' + fnum(mem.get("usage"), "%.0f%%") + ' · 压力 ' + pressure_s + '</div>'
         '<img id="cv2" class="chart" src="sparkmembar' + _rev + '.png">'
-        '<div class="dt">App ' + fnum(mem.get("appGB"), "%.1f") + ' · Wired ' + fnum(mem.get("wiredGB"), "%.1f") + ' · Comp ' + fnum(mem.get("compGB"), "%.1f") + ' · Free ' + fnum((mem.get("totalGB") or 0) - (mem.get("appGB") or 0) - (mem.get("wiredGB") or 0) - (mem.get("compGB") or 0), "%.1f") + 'G</div></div>'
+        '<div class="dt">App ' + fnum(mem.get("appGB"), "%.1f") + ' · Wired ' + fnum(mem.get("wiredGB"), "%.1f") + ' · Comp ' + fnum(mem.get("compGB"), "%.1f") + ' · Free ' + fnum(mem.get("freeGB"), "%.1f") + 'G</div></div>'
         '<div class="card compact"><div class="sech compact">DISK · ' + fnum(disk.get("usage"), "%.0f%%") + ' · 剩 ' + disk_free_s + '</div>'
         '<img id="cv3" class="chart" src="sparkdiskread' + _rev + '.png">'
         '<img id="cv4" class="chart" src="sparkdiskwrite' + _rev + '.png">'

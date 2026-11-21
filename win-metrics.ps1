@@ -60,7 +60,7 @@ function Get-MemInfo {
         return @{
             usedGB  = [math]::Round($used / 1GB, 2)
             totalGB = [math]::Round($total / 1GB, 2)
-            pct     = if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null }
+            pct     = $(if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null })
         }
     } catch { return @{} }
 }
@@ -78,7 +78,7 @@ function Get-DiskInfo {
             usedGB  = [math]::Round($used / 1GB, 2)
             totalGB = [math]::Round($total / 1GB, 2)
             freeGB  = [math]::Round($free / 1GB, 2)
-            pct     = if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null }
+            pct     = $(if ($total -gt 0) { [math]::Round($used / $total * 100, 1) } else { $null })
         }
     } catch { return @{} }
 }
@@ -100,7 +100,9 @@ function Get-CpuTempC {
 function Get-UptimeSeconds {
     try {
         $os = Get-CimInstance Win32_OperatingSystem
-        return [int]((Get-Date) - $os.LastBootUpTime).TotalSeconds
+        # 括号必须包住 .TotalSeconds —— 写成 [int](...).TotalSeconds 会先转型
+        # TimeSpan（抛异常）再取属性
+        return [int](((Get-Date) - $os.LastBootUpTime).TotalSeconds)
     } catch { return $null }
 }
 
@@ -174,7 +176,8 @@ while ($true) {
     foreach ($k in $payload.Keys) {
         if ($null -ne $payload[$k]) { $clean[$k] = $payload[$k] }
     }
-    $body = ($clean | ConvertTo-Json -Compress -Depth 3)
+    # 用 -InputObject 而不是管道：管道对 OrderedDictionary 的处理依赖版本行为
+    $body = ConvertTo-Json -InputObject $clean -Compress -Depth 3
 
     if ($Once) {
         Write-Host $body

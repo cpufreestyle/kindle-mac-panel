@@ -36,7 +36,31 @@ $MacCandidates = @(
     '192.168.1.224', '192.168.15.244'
 )
 $CacheFile = "$env:LOCALAPPDATA\win-metrics\mac-ip.txt"
+# 网卡计数器基线：进程重启后从磁盘恢复，否则网速要到第二次采样才有值
+$NicStateFile = "$env:LOCALAPPDATA\win-metrics\nic-state.json"
 $endpoint = ''
+
+function Save-NicState {
+    param($State)
+    try {
+        $dir = Split-Path $NicStateFile -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $State | ConvertTo-Json -Compress -Depth 4 | Set-Content -Path $NicStateFile
+    } catch { }
+}
+
+function Load-NicState {
+    try {
+        if (-not (Test-Path $NicStateFile)) { return $null }
+        $j = Get-Content $NicStateFile -Raw | ConvertFrom-Json
+        if (-not $j -or -not $j.counters) { return $null }
+        $h = @{}
+        foreach ($p in $j.counters.PSObject.Properties) {
+            $h[$p.Name] = @{ recv = [double]$p.Value.recv; sent = [double]$p.Value.sent }
+        }
+        return @{ counters = $h; ts = [double]$j.ts }
+    } catch { return $null }
+}
 
 function Resolve-MacEndpoint {
     # 返回可达的 endpoint；探测顺序：显式 -MacIp → 缓存 → 候选列表
@@ -154,6 +178,16 @@ function Get-UptimeSeconds {
 $prevBytes = $null
 $prevTime = $null
 
+# 恢复上次留下的网卡计数器基线（脚本重启后第一次采样就有网速）
+$st = Load-NicState
+if ($st -and $st.counters -and $st.ts) {
+    $prevBytes = $st.counters
+    try { $prevTime = [DateTime]::FromOADate([double]$st.ts) } catch { $prevTime = $null }
+    if ($prevTime) {
+        Write-Host "win-metrics: 已恢复网卡基线（$($prevTime.ToString('HH:mm:ss'))）"
+    }
+}
+
 # 解析接收端（-MacIp 给死就用它，否则自动发现）
 $mac = Resolve-MacEndpoint
 if (-not $mac) {
@@ -226,25 +260,27 @@ while ($true) {
             if ($prevBytes -and $prevTime) {
                 $dt = ($now - $prevTime).TotalSeconds
                 if ($dt -gt 0) {
-                $d = 0.0; $u = 0.0
-                foreach ($k in $cur.Keys) {
-                    if ($prevBytes.ContainsKey($k)) {
-                        # BytesReceivedPersec/BytesSentPersec 是 32 位累计计数器，
-                        # 高速链路上会回绕（4GB）—— 差分为负说明回绕了，加回 2^32
-                        $dr = $cur[$k].recv - $prevBytes[$k].recv
-                        if ($dr -lt 0) { $dr += 4294967296 }
-                        $ds = $cur[$k].sent - $prevBytes[$k].sent
-                        if ($ds -lt 0) { $ds += 4294967296 }
-                        $d += $dr
-                        $u += $ds
+                    $d = 0.0; $u = 0.0
+                    foreach ($k in $cur.Keys) {
+                        if ($prevBytes.ContainsKey($k)) {
+                            # BytesReceivedPersec/BytesSentPersec 是 32 位累计计数器，
+                            # 高速链路上会回绕（4GB）—— 差分为负说明回绕了，加回 2^32
+                            $dr = $cur[$k].recv - $prevBytes[$k].recv
+                            if ($dr -lt 0) { $dr += 4294967296 }
+                            $ds = $cur[$k].sent - $prevBytes[$k].sent
+                            if ($ds -lt 0) { $ds += 4294967296 }
+                            $d += $dr
+                            $u += $ds
+                        }
                     }
-                }
                     $downKBs = [math]::Round($d / $dt / 1KB, 1)
                     $upKBs = [math]::Round($u / $dt / 1KB, 1)
                 }
             }
             $prevBytes = $cur
             $prevTime = $now
+            # 基线落盘：脚本重启后网速不用等第二次采样
+            Save-NicState -State @{ ts = $now.ToOADate(); counters = $cur }
         }
     } catch { }
 

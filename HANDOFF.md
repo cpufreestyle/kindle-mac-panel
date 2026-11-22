@@ -1,8 +1,8 @@
-# HANDOFF v1 (2026-11-22) — 项目迁到 `AI Shared/repo/` + 运维值班台改名 + Windows 主机接入
+# HANDOFF v2 (2026-11-22) — NUC9 已验证在线 — 项目迁到 `AI Shared/repo/` + 运维值班台改名 + Windows 主机接入
 
 ## 一句话结论
 
-**项目已从 `~/kindle-panel` 迁到 `/Users/a1-6/AI Shared/repo/kindle-panel`（旧路径留符号链接兼容），面板标题改为「运维值班台」，并新增局域网 Windows 主机（NUC9）的指标接入 —— Mac 侧全部就绪，Windows 侧等用户在 NUC9 上跑一行命令。**
+**项目已从 `~/kindle-panel` 迁到 `/Users/a1-6/AI Shared/repo/kindle-panel`（旧路径留符号链接兼容），面板标题改为「运维值班台」，并新增局域网 Windows 主机（NUC9）的指标接入 —— Mac 侧全部就绪，NUC9 已验证在线（WIN 卡 CPU/内存/磁盘实时显示）。**
 
 ---
 
@@ -93,7 +93,7 @@ Kindle 版再显式锁回 `html.k{height:100%;overflow:hidden}`。
 - 推送日志 `/tmp/kindle-win.log`（每条记来源 IP、host、各值；被拒记原因）
 - Windows 脚本下载 `http://<Mac-IP>:18866/win/win-metrics.ps1`（白名单两个文件）
 
-### NUC9 侧（**待用户操作**，一行命令）
+### NUC9 侧（**已验证在线**，常驻运行）
 
 在 NUC9 的**管理员** PowerShell：
 
@@ -107,7 +107,7 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 安装器会：检查 PS7 → 从 Mac 下载采集脚本 → 注册开机自启计划任务（SYSTEM 账号，
 `ExecutionTimeLimit=0`，常驻脚本默认的运行时长限制会把它掐掉）→ 启动 → 自动自检并打印结果。
 
-装完 Mac 面板出现 `WIN · NUC9 · 在线`。
+装完 Mac 面板出现 `WIN · NUC9 · 在线`。<br>**当前状态**：`win-metrics.ps1` 已在 NUC9 常驻后台运行（后台 pwsh，每 5s 推送），Mac 面板及 Kindle 均显示 `WIN · 泗塘NUC9 · 在线`（CPU/内存/磁盘实时刷新）。
 
 ---
 
@@ -142,7 +142,7 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 
 ## 5. 下一步（按优先级）
 
-1. **NUC9 上运行 `nuc9-install-win-metrics.ps1`**（管理员 `pwsh`），或等价执行 `iwr http://<Mac-IP>:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1`，装完看自检输出；失败把输出贴回来
+1. **NUC9 已验证在线**：`win-metrics.ps1` 常驻后台运行（pwsh，每 5s 推送），Mac 面板和 Kindle 均显示 `WIN · 泗塘NUC9 · 在线`。如需重装，执行 `nuc9-install-win-metrics.ps1`（管理员 `pwsh`）或等价执行 `iwr http://<Mac-IP>:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1`。
 2. NUC9 通了以后验证：浏览器面板有 WIN 卡曲线、Kindle 上有两行 WIN 文字、`/tmp/kindle-win.log` 有 `.68` 的记录
 3. 想让 Mac 主动拉（不装 Windows 计划任务）的话，需要配一次免密 SSH
 4. `alert.sh` 目前只盯 Mac 本机指标 —— Windows 侧离线要不要告警，等定
@@ -154,4 +154,6 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 - [[kindle-panel-windows-integration]] —— 本次的架构与坑位（UA 分流、内存口径、反向推送的原因）
 - [[kindle-illusion-waf-app-recipe]] —— 动态图表=PIL 多序列曲线 PNG + img 双缓冲；JS 执行不稳定
 - [[kindle-pw4-usbnet-install-state]] —— 设备侧通道；U 盘模式死结（`diskutil eject` 后 ~75s 恢复）
+
+
 

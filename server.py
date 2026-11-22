@@ -917,7 +917,7 @@ html.k { height:100%; overflow:hidden; }
 html.k body { height:100%; overflow:hidden; }
 #app { min-height:100%; box-sizing:border-box; padding:8px 22px 10px 22px; }
 #head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:4px; }
-#title { float:left; font-size:44px; font-weight:bold; line-height:1.05; letter-spacing:0.08em; }
+#title { float:left; font-size:44px; font-weight:bold; line-height:1; letter-spacing:0.08em; }
 #ts { float:right; font-size:26px; color:#222; font-weight:bold; }
 .card { box-sizing:border-box; border:3px solid #000; padding:5px 8px 6px 8px; margin-bottom:4px; }
 .card.compact { padding:3px 8px 5px 8px; }
@@ -931,8 +931,8 @@ html.k body { height:100%; overflow:hidden; }
 .val { float:right; width:130px; text-align:right; font-size:24px; font-weight:bold; }
 .big { font-size:40px; font-weight:bold; line-height:1.1; margin-top:2px; }
 .big .g { color:#666; }
-.kv { font-size:26px; font-weight:bold; color:#111; line-height:1.25; margin-top:4px; }
-.dt { font-size:22px; color:#333; font-weight:bold; line-height:1.25; margin-top:4px; }
+.kv { font-size:26px; font-weight:bold; color:#111; line-height:1; margin-top:2px; }
+.dt { font-size:22px; color:#333; font-weight:bold; line-height:1; margin-top:2px; }
 img.chart { display:block; width:100%; height:auto; margin-top:1px; }
 .spark { font-size:44px; line-height:1; margin-top:6px; overflow:hidden; white-space:nowrap; }
 .spark.s2 { font-size:34px; margin-top:5px; }
@@ -943,8 +943,8 @@ img.chart { display:block; width:100%; height:auto; margin-top:1px; }
 .kbt { margin-top:4px; height:22px; border:3px solid #000;
   background:#fff; overflow:hidden; }
 .kbf { height:100%; background:#000; }
-.kline { margin-top:6px; font-size:24px; color:#333; font-weight:bold; line-height:1.25; }
-#advice { font-size:24px; color:#222; margin-top:6px; font-weight:bold; line-height:1.25; }
+.kline { margin-top:4px; font-size:24px; color:#333; font-weight:bold; line-height:1; }
+#advice { font-size:24px; color:#222; margin-top:4px; font-weight:bold; line-height:1; }
 """
 
 

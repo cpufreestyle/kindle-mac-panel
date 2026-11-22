@@ -1373,7 +1373,7 @@ def render_panel(kindle=False):
     _sp_mem = ("%.0f/%.0fG" % (_mu / 1024.0, _mt / 1024.0)) if isinstance(_mu, (int, float)) and isinstance(_mt, (int, float)) else "--"
     qstats_linked = d.get("source") == "qstats"
     src_badge = " · Q · P3" if qstats_linked else " · P3"
-    panel_title = "QSTATS" if qstats_linked else "运维值班台"
+    panel_title = "运维值班台"
     _rev = "_a" if int(time.time()) % 2 == 0 else "_b"
     _temp_img = "sparkmemtrend" + _rev + ".png"
     return (

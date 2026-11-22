@@ -120,6 +120,7 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 | `win-metrics.ps1` | Windows 侧采集器（PS7）。Mac 地址自动发现（Mac 的 en0 IP 会在 `192.168.1.x`/`192.168.15.x` 间切换，写死会失联）；`-Check` 诊断模式 |
 | `install-win-metrics.ps1` | Windows 侧一键安装器 |
 | `docs/WINDOWS-INTEGRATION.md` | Windows 接入完整手册（部署/排障/采集项） |
+ | `nuc9-install-win-metrics.ps1` | NUC9 一键安装脚本（从 Mac 下载 `install-win-metrics.ps1` 并运行，等价于 `iwr http://<Mac-IP>:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1`） |
 
 ---
 
@@ -141,7 +142,7 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 
 ## 5. 下一步（按优先级）
 
-1. **NUC9 上跑那一行命令**（管理员 PowerShell），装完看自检输出；失败把输出贴回来
+1. **NUC9 上运行 `nuc9-install-win-metrics.ps1`**（管理员 `pwsh`），或等价执行 `iwr http://<Mac-IP>:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1`，装完看自检输出；失败把输出贴回来
 2. NUC9 通了以后验证：浏览器面板有 WIN 卡曲线、Kindle 上有两行 WIN 文字、`/tmp/kindle-win.log` 有 `.68` 的记录
 3. 想让 Mac 主动拉（不装 Windows 计划任务）的话，需要配一次免密 SSH
 4. `alert.sh` 目前只盯 Mac 本机指标 —— Windows 侧离线要不要告警，等定
@@ -153,3 +154,4 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 - [[kindle-panel-windows-integration]] —— 本次的架构与坑位（UA 分流、内存口径、反向推送的原因）
 - [[kindle-illusion-waf-app-recipe]] —— 动态图表=PIL 多序列曲线 PNG + img 双缓冲；JS 执行不稳定
 - [[kindle-pw4-usbnet-install-state]] —— 设备侧通道；U 盘模式死结（`diskutil eject` 后 ~75s 恢复）
+

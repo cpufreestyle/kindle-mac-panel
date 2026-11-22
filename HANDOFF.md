@@ -1,8 +1,28 @@
-# HANDOFF v2 (2026-11-22) — NUC9 已验证在线 — 项目迁到 `AI Shared/repo/` + 运维值班台改名 + Windows 主机接入
+# HANDOFF v4 (2026-11-22) — NUC9 已验证在线 — 项目迁到 `AI Shared/repo/` + 运维值班台改名 + Windows 主机接入
 
 ## 一句话结论
 
-**项目已从 `~/kindle-panel` 迁到 `/Users/a1-6/AI Shared/repo/kindle-panel`（旧路径留符号链接兼容），面板标题改为「运维值班台」，并新增局域网 Windows 主机（NUC9）的指标接入 —— Mac 侧全部就绪，NUC9 已验证在线（WIN 卡 CPU/内存/磁盘实时显示）。**
+**项目已从 `~/kindle-panel` 迁到 `/Users/a1-6/AI Shared/repo/kindle-panel`（旧路径留符号链接兼容），面板标题改为「运维值班台」，并新增局域网 Windows 主机（NUC9）的指标接入 —— Mac 侧全部就绪，GitHub 仓库已公开，NUC9 已验证在线并持续上报。**
+
+---
+
+## 0. 交接速查
+
+| | |
+|---|---|
+| 仓库 | `/Users/a1-6/AI Shared/repo/kindle-panel`（**目录名带空格，命令行要加引号**） |
+| 旧路径 | `~/kindle-panel` → 符号链接指到新目录，老命令继续能用 |
+| GitHub 仓库 | https://github.com/cpufreestyle/kindle-mac-panel （**PUBLIC**，匿名网页访问 `200`） |
+| Git 克隆地址 | `https://github.com/cpufreestyle/kindle-mac-panel.git`（当前唯一配置的 `origin`） |
+| 面板 | http://192.168.1.112:18866/panel.html |
+| 24h 历史 | http://192.168.1.112:18866/history |
+| 推送日志 | `/tmp/kindle-win.log` |
+| Windows 脚本 | http://192.168.1.112:18866/win/win-metrics.ps1 （白名单两个文件） |
+| 自启服务 | `com.kindle.panel`（KeepAlive）+ `sensors` / `wx` / `alert` / `daily` / `gitpush` |
+| 主分支 | `main`，最后提交见 `git log --oneline -1` |
+
+> 当前仓库只配置 GitHub `origin`，没有配置 Gitee remote；不要把未核实的 Gitee 地址写进部署命令。
+> 2026-11-22 已用 `gh repo edit ... --visibility public` 将 GitHub 仓库设为公开；匿名网页访问返回 `200`，匿名 `git ls-remote` 可读取 `main`。
 
 ---
 
@@ -101,8 +121,8 @@ Kindle 版再显式锁回 `html.k{height:100%;overflow:hidden}`。
 iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1
 ```
 
-> **仓库是 PRIVATE**，`git clone https://github.com/...` 在 NUC9 上会失败（那边没 GitHub 凭据），
-> 所以走 Mac 提供文件下载（NUC9 → Mac:18866 本来就通，采集也要用这个通道）。
+> 仓库已公开，可直接 `git clone`；但仍推荐走 Mac 提供文件下载（NUC9 → Mac:18866 本来就通，
+> 采集也要用这个通道，能确保拿到 Mac 当前提供的安装器版本）。
 
 安装器会：检查 PS7 → 从 Mac 下载采集脚本 → 注册开机自启计划任务（SYSTEM 账号，
 `ExecutionTimeLimit=0`，常驻脚本默认的运行时长限制会把它掐掉）→ 启动 → 自动自检并打印结果。
@@ -119,8 +139,37 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 | `usb-connect.sh` | Kindle USB 接驳：等新网卡 → 配 `192.168.15.201` → 等 telnet:23 通。**这个静态 IP 从来没有脚本配过**，以前每次插线都得手动 ifconfig |
 | `win-metrics.ps1` | Windows 侧采集器（PS7）。Mac 地址自动发现（Mac 的 en0 IP 会在 `192.168.1.x`/`192.168.15.x` 间切换，写死会失联）；`-Check` 诊断模式 |
 | `install-win-metrics.ps1` | Windows 侧一键安装器 |
+| `test-install-sim.ps1` | **在 Mac 上演练 Windows 安装流程**（桩掉 ScheduledTasks 的 7 个 cmdlet + 绕过平台检查 + 14 项断言）。Windows 侧代码改完没法真机验证，这是唯一回归手段 —— 它抓到过 3 个真 bug |
 | `docs/WINDOWS-INTEGRATION.md` | Windows 接入完整手册（部署/排障/采集项） |
  | `nuc9-install-win-metrics.ps1` | NUC9 一键安装脚本（从 Mac 下载 `install-win-metrics.ps1` 并运行，等价于 `iwr http://<Mac-IP>:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1`） |
+
+### 3.1 演练脚本抓到的 3 个真 bug
+
+Windows 侧的代码在 Mac 上看不出问题（语法合法、逻辑看着对），只有把流程**真跑一遍**才暴露：
+
+| # | bug | 后果 |
+|---|---|---|
+| 1 | 安装器 `param` 里**没有 `-Port`**，但下载逻辑引用了 `$Port` | 未定义变量 → URL 变成 `http://192.168.1.112:/lan.txt` → 下载直接失败 → 退回 GitHub raw（当时仓库为 PRIVATE → 404）→ **那一行命令根本跑不通** |
+| 2 | 采集脚本已下到 `C:\win-metrics.ps1` 时又 `Copy-Item` 到同一路径 | `Cannot overwrite the item ... with itself` —— 一行命令安装方式（安装器在 `C:\`、脚本也装 `C:\`）**必然触发** |
+| 3 | 平台判断用 `$IsWindows` | 那是 **PS6+ 独有变量**，Windows PowerShell 5.1 上是 `$null` → 误判成「非 Windows」直接退出 |
+
+> 第 3 个是顺带修的（NUC9 有 PS7，不修也不影响），但 `test-install-sim.ps1` 里记着，
+> 免得以后有新脚本再踩。
+
+**演练脚本自身也有坑**（写的时候踩的，记下来）：
+- `$args` 是 PowerShell **保留自动变量**，不能拿来做参数数组 → 用哈希表 splatting
+- 安装器的 `Say()` 用 `Write-Host`，不进管道 → 演练里要临时覆盖 `Write-Host` 捕获，
+  且**覆盖期间只收集不打印**，跑完立刻 `Remove-Item Function:\Write-Host` 恢复
+- 桩的 switch 参数（`-AtStartup` / `-Force` / `-AllowStartIfOnBatteries` 等）
+  必须声明成 `[switch]`，否则报「Missing an argument」
+
+跑一遍：
+
+```bash
+pwsh -NoProfile -File test-install-sim.ps1
+```
+
+（Mac 上自检那步会 exit 3 —— 无 Win32 CIM 采不到数据，属预期，不影响前面 14 项断言。）
 
 ---
 
@@ -130,6 +179,8 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
   - Mac en0 在 `192.168.1.112`（WiFi）和 `192.168.15.201`（USB RNDIS）之间切
   - Windows 采集脚本会自动发现 + 缓存（`%LOCALAPPDATA%\win-metrics\mac-ip.txt`），推送失败时重新发现
   - Kindle 侧 fetchloop 靠 `lan.txt` 探测 Mac，也有候选列表
+- **仓库已公开**：GitHub 网页/raw 可匿名访问；NUC9 也可直接 clone。
+  但一键安装仍优先走 Mac 提供的 `/win/` 下载，保证和当前面板服务版本配套。
 - **`_hsave` 加了锁**：采样线程和 HTTP 推送线程都会调，原先无锁时 `json.dump` 遍历 list 会撞上
   另一线程的 append，可能抛 `list changed size during iteration` 并写坏 hists.json。
   现在加锁 + 拷快照 + `tempfile` 原子替换（保持原文件权限）。
@@ -137,19 +188,46 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 - **Kindle 的 JS 执行随机失效**（见 `kindle-illusion-waf-app-recipe` 记忆），所以面板的文字刷新
   靠服务端渲染 + 8s 轮询 spark.json，不依赖复杂 JS。
 - **e-ink 刷完要等 12–30s** 再截图，否则拍到刷新中途的残影。
+- **新目录名带空格**：`cd "/Users/a1-6/AI Shared/repo/kindle-panel"` —— 引号不能省。
 
 ---
 
 ## 5. 下一步（按优先级）
 
 1. **NUC9 已验证在线**：`win-metrics.ps1` 常驻后台运行（pwsh，每 5s 推送），Mac 面板和 Kindle 均显示 `WIN · 泗塘NUC9 · 在线`。如需重装，执行 `nuc9-install-win-metrics.ps1`（管理员 `pwsh`）或等价执行 `iwr http://<Mac-IP>:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; powershell -ExecutionPolicy Bypass -File C:\iwm.ps1`。
-2. NUC9 通了以后验证：浏览器面板有 WIN 卡曲线、Kindle 上有两行 WIN 文字、`/tmp/kindle-win.log` 有 `.68` 的记录
+2. 最新续接核验：面板 API 返回 `win.ok=true`、`host='泗塘NUC9'`、`age≈6s`；日志持续出现 `OK from=192.168.1.68`。
 3. 想让 Mac 主动拉（不装 Windows 计划任务）的话，需要配一次免密 SSH
 4. `alert.sh` 目前只盯 Mac 本机指标 —— Windows 侧离线要不要告警，等定
 
 ---
 
-## 6. 相关记忆
+## 6. 2026-11-22 续接核验
+
+- 早期核验：NUC9 可 ping、TCP/22 可达，但当时无 SSH 凭据；`/tmp/kindle-win.log` 曾没有 `.68` 记录，API 曾返回 `win.ok=false`。
+- 最新核验：`GET http://127.0.0.1:18866/api/push/win` 返回 `win.ok=true`、`host='泗塘NUC9'`、`age≈6s`；日志持续出现 `OK from=192.168.1.68`。
+- GitHub 仓库已公开；匿名网页访问返回 `200`，匿名 `git ls-remote` 可读取 `main`。
+
+---
+
+## 7. 回归验证清单（迁移+本轮改动后已全过）
+
+| 项 | 结果 |
+|---|---|
+| 新目录存在 / 旧路径是符号链接且指向新目录 / git 完整 | ✅ |
+| 进程实际跑新路径；`hists.json` 写在新目录且与符号链接同一文件 | ✅ |
+| 6 个 LaunchAgent `bootout`+`bootstrap` 重载后注册且在跑 | ✅ |
+| launchd 里 **8 个** kindle 任务（不是 9） | ✅ `com.kindle.gitpush` 是一次性任务，push 成功后自己 bootout + 删 plist，属设计行为 |
+| mem 四段自洽（App+Wired+Comp+Free = total）、comp 非零 | ✅ |
+| Kindle 版（curl UA）有 `class="k"`、无 WIN 曲线图 | ✅ |
+| 浏览器版有 WIN 曲线图、标题「运维值班台」 | ✅ |
+| `/win/` 白名单两个文件可下载、内容完整 | ✅ |
+| `/win/` 白名单外（含 `..%2F`、`....//`、`%00`）全 404 | ✅ |
+| `test-install-sim.ps1` 演练 14 项断言全过 | ✅ |
+| Kindle 真机渲染（帧缓冲解码）标题/四段/底部建议行完整不裁切 | ✅ |
+
+---
+
+## 8. 相关记忆
 
 - [[kindle-panel-windows-integration]] —— 本次的架构与坑位（UA 分流、内存口径、反向推送的原因）
 - [[kindle-illusion-waf-app-recipe]] —— 动态图表=PIL 多序列曲线 PNG + img 双缓冲；JS 执行不稳定

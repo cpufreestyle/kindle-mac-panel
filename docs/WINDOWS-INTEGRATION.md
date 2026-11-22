@@ -57,7 +57,7 @@ iwr http://192.168.1.112:18866/win/install-win-metrics.ps1 -OutFile C:\iwm.ps1; 
 ### 备选路径
 
 <details>
-<summary>有 GitHub 凭据时</summary>
+<summary>直接从 GitHub clone（可选）</summary>
 
 ```powershell
 git clone https://github.com/cpufreestyle/kindle-mac-panel.git C:\kp
@@ -173,7 +173,24 @@ Kindle 上显示的 index.html 是 fetchloop 用 **curl** 抓的，浏览器是�
 
 ---
 
-## 四、排障
+## 四、改完 Windows 侧脚本怎么验
+
+Mac 上没有 Windows 环境，改完 `win-metrics.ps1` / `install-win-metrics.ps1` 后没法真机跑。
+仓库里带了个演练脚本：
+
+```bash
+pwsh -NoProfile -File test-install-sim.ps1
+```
+
+它桩掉 ScheduledTasks 的 7 个 cmdlet、绕过平台检查，然后跑**真安装器**并做 14 项断言
+（脚本落地、任务名/触发器/账号/权限/ExecutionTimeLimit=0/任务参数/下载成功…）。
+
+Mac 上自检那一步会 exit 3 —— 没有 Win32 CIM 采不到数据，属预期，不影响前面的断言。
+
+> 这个演练抓到过 3 个真 bug（缺 `-Port` 导致 URL 空端口、Copy-Item 同文件、
+> `$IsWindows` 在 5.1 上是 `$null`），改 Windows 侧脚本后**务必跑一遍**。
+
+## 五、排障
 
 | 现象 | 查什么 |
 |---|---|

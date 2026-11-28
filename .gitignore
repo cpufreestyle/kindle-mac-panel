@@ -1,8 +1,10 @@
 # 运行时数据（本地生成，不进仓库）
 history.json
+hists.json
 __pycache__/
 *.pyc
 kindle-panel.log
+out.png
 
 # 私有配置（模板文件 city.txt / bark-url.txt 入库，真实值忽略）
 bark-url.txt.local

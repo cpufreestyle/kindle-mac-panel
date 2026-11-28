@@ -1160,11 +1160,7 @@ def _win_card_html(rev, kindle=False):
     w = win_snapshot()
     host = w.get("host") or "WIN"
     if not w.get("ok"):
-        # 离线：只在曾经收过数据时占一行提示
-        if not _WIN["data"]:
-            return ""
-        return ('<div class="card compact win"><div class="sech compact">WIN · ' + host +
-                ' · 离线（' + str(int(w.get("age") or 0)) + 's 前）</div></div>')
+        return ""
 
     def fnum(x, fmt):
         return (fmt % x) if isinstance(x, (int, float)) else "--"

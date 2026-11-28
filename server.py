@@ -917,10 +917,10 @@ html.k { height:100%; overflow:hidden; }
 html.k body { height:100%; overflow:hidden; }
 #app { min-height:100%; box-sizing:border-box; padding:8px 22px 10px 22px; }
 #head { overflow:hidden; border-bottom:4px solid #000; padding-bottom:4px; }
-#title { float:left; font-size:44px; font-weight:bold; line-height:1; letter-spacing:0.08em; }
+#title { float:left; font-size:44px; font-weight:bold; letter-spacing:0.08em; }
 #ts { float:right; font-size:26px; color:#222; font-weight:bold; }
-.card { box-sizing:border-box; border:3px solid #000; padding:5px 8px 6px 8px; margin-bottom:4px; }
-.card.compact { padding:3px 8px 5px 8px; }
+.card { box-sizing:border-box; border:3px solid #000; padding:4px 8px 4px 8px; margin-bottom:3px; }
+.card.compact { padding:2px 8px 3px 8px; }
 .sech { font-size:26px; font-weight:bold; margin-bottom:0; }
 .sech.compact { font-size:22px; }
 .row { overflow:hidden; margin-top:6px; }
@@ -931,8 +931,8 @@ html.k body { height:100%; overflow:hidden; }
 .val { float:right; width:130px; text-align:right; font-size:24px; font-weight:bold; }
 .big { font-size:40px; font-weight:bold; line-height:1.1; margin-top:2px; }
 .big .g { color:#666; }
-.kv { font-size:26px; font-weight:bold; color:#111; line-height:1; margin-top:2px; }
-.dt { font-size:22px; color:#333; font-weight:bold; line-height:1; margin-top:2px; }
+.kv { font-size:26px; font-weight:bold; color:#111; margin-top:2px; }
+.dt { font-size:22px; color:#333; margin-top:2px; font-weight:bold; }
 img.chart { display:block; width:100%; height:auto; margin-top:1px; }
 .spark { font-size:44px; line-height:1; margin-top:6px; overflow:hidden; white-space:nowrap; }
 .spark.s2 { font-size:34px; margin-top:5px; }
@@ -943,8 +943,8 @@ img.chart { display:block; width:100%; height:auto; margin-top:1px; }
 .kbt { margin-top:4px; height:22px; border:3px solid #000;
   background:#fff; overflow:hidden; }
 .kbf { height:100%; background:#000; }
-.kline { margin-top:4px; font-size:24px; color:#333; font-weight:bold; line-height:1; }
-#advice { font-size:24px; color:#222; margin-top:4px; font-weight:bold; line-height:1; }
+.kline { margin-top:4px; font-size:24px; color:#333; font-weight:bold; }
+#advice { font-size:24px; color:#222; margin-top:4px; font-weight:bold; }
 """
 
 
@@ -1373,7 +1373,7 @@ def render_panel(kindle=False):
     _sp_mem = ("%.0f/%.0fG" % (_mu / 1024.0, _mt / 1024.0)) if isinstance(_mu, (int, float)) and isinstance(_mt, (int, float)) else "--"
     qstats_linked = d.get("source") == "qstats"
     src_badge = " · Q · P3" if qstats_linked else " · P3"
-    panel_title = "运维值班台"
+    panel_title = "QSTATS" if qstats_linked else "运维值班台"
     _rev = "_a" if int(time.time()) % 2 == 0 else "_b"
     _temp_img = "sparkmemtrend" + _rev + ".png"
     return (
@@ -1410,10 +1410,10 @@ def render_panel(kindle=False):
         '<div class="kv">NAND ' + fnum(th0x_v, "%.1f°C") + ' · 电池 ' + fnum(tb1t_v, "%.1f°C") + ' · 风扇 ' + fnum(fan_v, "%.0f") + ' rpm</div>'
         '<div class="kv">Kindle ' + kb_s + ' · ' + km_s + ' · ' + kd_s + ' · 功耗 ' + fnum(pstr_v, "%.1fW") + '（均 ' + fnum(aps_v, "%.1fW") + '）</div>'
         '</div>'
-        '<div class="card compact"><div class="sech compact">DGX · ' + _sp_host + ' · ' + _sp_state + ' · GPU ' + _sp_big + ' · ' + _sp_tmp + ' · ' + _sp_pwr + '</div>'
-        '<img id="cv8" class="chart" src="sparkdgxutil' + _rev + '.png">'
-        '<img id="cv9" class="chart" src="sparkdgxtemp' + _rev + '.png">'
-        '</div>'
+        + ('<div class="card compact"><div class="sech compact">DGX · ' + _sp_host + ' · ' + _sp_state + ' · GPU ' + _sp_big + ' · ' + _sp_tmp + ' · ' + _sp_pwr + '</div>'
+           '<img id="cv8" class="chart" src="sparkdgxutil' + _rev + '.png">'
+           '<img id="cv9" class="chart" src="sparkdgxtemp' + _rev + '.png">'
+           '</div>') if _sp_on else ''
         + _win_card_html(_rev, kindle)
         + '<div id="advice">' + advice + ' · 已运行 ' + d["uptime"] + '</div>'
         "</div></body></html>"
